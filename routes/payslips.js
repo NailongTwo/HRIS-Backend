@@ -1,0 +1,132 @@
+const express = require('express');
+const router = express.Router();
+const pool = require('../config/db');
+const auth = require('../middleware/auth');
+
+// GET all payslips by employee
+router.get('/employee/:id', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT p.*, pp.period_label, pp.start_date, pp.end_date, pp.payment_date
+      FROM payslips p
+      JOIN pay_periods pp ON p.pay_period_id = pp.id
+      WHERE p.employee_id = $1 AND p.is_released = true
+      ORDER BY pp.start_date DESC`,
+      [req.params.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+// GET single payslip with line items
+router.get('/:id', auth, async (req, res) => {
+  try {
+    const payslip = await pool.query(
+      `SELECT p.*, pp.period_label, pp.start_date, pp.end_date, pp.payment_date
+      FROM payslips p
+      JOIN pay_periods pp ON p.pay_period_id = pp.id
+      WHERE p.id = $1`,
+      [req.params.id]
+    );
+
+    const lineItems = await pool.query(
+      `SELECT * FROM payslip_line_items 
+      WHERE payslip_id = $1 
+      ORDER BY sort_order ASC`,
+      [req.params.id]
+    );
+
+    res.json({
+      payslip: payslip.rows[0],
+      line_items: lineItems.rows
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+// GET all pay periods
+router.get('/pay-periods/all', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM pay_periods ORDER BY start_date DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+// CREATE payslip
+router.post('/', auth, async (req, res) => {
+  const {
+    employee_id,
+    pay_period_id,
+    basic_pay,
+    overtime_pay,
+    holiday_pay,
+    allowances,
+    other_earnings,
+    gross_pay,
+    sss_deduction,
+    philhealth_deduction,
+    pagibig_deduction,
+    withholding_tax,
+    late_deduction,
+    absent_deduction,
+    other_deductions,
+    total_deductions,
+    net_pay,
+    days_worked,
+    days_absent,
+    days_leave,
+    ot_hours,
+    late_mins_total,
+    generated_by
+  } = req.body;
+
+  try {
+    // Generate reference number PS-YYYY-MM-{period}-{employee_no}
+    const refNo = `PS-${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${employee_id.slice(0, 6)}`;
+
+    const result = await pool.query(
+      `INSERT INTO payslips 
+      (reference_no, employee_id, pay_period_id, basic_pay, overtime_pay,
+      holiday_pay, allowances, other_earnings, gross_pay, sss_deduction,
+      philhealth_deduction, pagibig_deduction, withholding_tax, late_deduction,
+      absent_deduction, other_deductions, total_deductions, net_pay,
+      days_worked, days_absent, days_leave, ot_hours, late_mins_total, generated_by) 
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 
+      $15, $16, $17, $18, $19, $20, $21, $22, $23, $24) 
+      RETURNING *`,
+      [refNo, employee_id, pay_period_id, basic_pay, overtime_pay,
+      holiday_pay, allowances, other_earnings, gross_pay, sss_deduction,
+      philhealth_deduction, pagibig_deduction, withholding_tax, late_deduction,
+      absent_deduction, other_deductions, total_deductions, net_pay,
+      days_worked, days_absent, days_leave, ot_hours, late_mins_total, generated_by]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+// RELEASE payslip to employee
+router.put('/:id/release', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `UPDATE payslips 
+      SET is_released = true, released_at = NOW()
+      WHERE id = $1 
+      RETURNING *`,
+      [req.params.id]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+module.exports = router;
