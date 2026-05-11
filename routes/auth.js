@@ -5,6 +5,8 @@ const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 require('dotenv').config();
 
+/*
+
 // TEMPORARY MOCK LOGIN - for testing only
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
@@ -29,6 +31,49 @@ router.post('/login', async (req, res) => {
   }
 
   return res.status(401).json({ message: 'Invalid email or password' });
+});
+
+module.exports = router;
+
+*/
+
+router.post('/login', async (req, res) => {
+  const { email, password } = req.body;
+
+  try {
+    // 1. Check if user exists in the PostgreSQL 'users' table
+    const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    
+    if (userResult.rows.length === 0) {
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    const user = userResult.rows[0];
+
+    // 2. Compare the password with the hash in the DB
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+    if (!isMatch) {
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    // 3. Create the JWT token using DB data
+    const token = jwt.sign(
+      { id: user.id, role: user.role, employee_no: user.employee_no },
+      process.env.JWT_SECRET,
+      { expiresIn: '1d' }
+    );
+
+    // 4. Send response back to frontend
+    res.json({ 
+      token, 
+      role: user.role, 
+      employee_no: user.employee_no 
+    });
+
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send('Server error');
+  }
 });
 
 module.exports = router;
