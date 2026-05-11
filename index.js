@@ -15,6 +15,11 @@ app.use('/api/overtime', require('./routes/overtime'));
 app.use('/api/tasks', require('./routes/tasks'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/payslips', require('./routes/payslips'));
+app.use('/api/departments', require('./routes/departments'));
+app.use('/api/positions', require('./routes/positions'));
+app.use('/api/events', require('./routes/events'));
+app.use('/api/documents', require('./routes/documents'));
+app.use('/api/reports', require('./routes/reports'));
 
 // Test route
 app.get('/', (req, res) => {
