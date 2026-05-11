@@ -39,22 +39,26 @@ module.exports = router;
 
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
+  console.log(`Attempting login for: [${email}]`);
 
   try {
-    // 1. Check if user exists in the PostgreSQL 'users' table
     const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
     
     if (userResult.rows.length === 0) {
+      console.log("No user found with that email in DB.");
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
     const user = userResult.rows[0];
+    console.log("User found. Comparing passwords...");
 
-    // 2. Compare the password with the hash in the DB
     const isMatch = await bcrypt.compare(password, user.password_hash);
+    console.log("Password match result:", isMatch);
+
     if (!isMatch) {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
+    
 
     // 3. Create the JWT token using DB data
     const token = jwt.sign(
