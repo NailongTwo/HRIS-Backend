@@ -3,10 +3,10 @@ const router = express.Router();
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
 
-// GET all employees
+// GET all employees - using the view
 router.get('/', auth, async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM employees');
+    const result = await pool.query('SELECT * FROM v_employee_current_employment');
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -16,20 +16,40 @@ router.get('/', auth, async (req, res) => {
 // GET single employee
 router.get('/:id', auth, async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM employees WHERE id = $1', [req.params.id]);
+    const result = await pool.query(
+      'SELECT * FROM v_employee_current_employment WHERE employee_id = $1',
+      [req.params.id]
+    );
+    if (!result.rows[0]) {
+      return res.status(404).json({ message: 'Employee not found' });
+    }
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
-// CREATE employee
+// CREATE employee - requires user_id first
 router.post('/', auth, async (req, res) => {
-  const { first_name, last_name, department, position, date_hired } = req.body;
+  const {
+    user_id,
+    employee_no,
+    first_name,
+    middle_name,
+    last_name,
+    date_of_birth,
+    gender,
+    civil_status,
+    nationality
+  } = req.body;
+
   try {
     const result = await pool.query(
-      'INSERT INTO employees (first_name, last_name, department, position, date_hired) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [first_name, last_name, department, position, date_hired]
+      `INSERT INTO employees 
+        (user_id, employee_no, first_name, middle_name, last_name, date_of_birth, gender, civil_status, nationality) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+       RETURNING *`,
+      [user_id, employee_no, first_name, middle_name, last_name, date_of_birth, gender, civil_status, nationality]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -39,23 +59,46 @@ router.post('/', auth, async (req, res) => {
 
 // UPDATE employee
 router.put('/:id', auth, async (req, res) => {
-  const { first_name, last_name, department, position } = req.body;
+  const {
+    first_name,
+    middle_name,
+    last_name,
+    civil_status,
+    nationality,
+    personal_email,
+    personal_phone
+  } = req.body;
+
   try {
     const result = await pool.query(
-      'UPDATE employees SET first_name=$1, last_name=$2, department=$3, position=$4 WHERE id=$5 RETURNING *',
-      [first_name, last_name, department, position, req.params.id]
+      `UPDATE employees 
+       SET first_name=$1, middle_name=$2, last_name=$3, 
+           civil_status=$4, nationality=$5, 
+           personal_email=$6, personal_phone=$7
+       WHERE id=$8 
+       RETURNING *`,
+      [first_name, middle_name, last_name, civil_status, nationality, personal_email, personal_phone, req.params.id]
     );
+    if (!result.rows[0]) {
+      return res.status(404).json({ message: 'Employee not found' });
+    }
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
-// DELETE employee
+// SOFT DELETE - set status to Inactive instead of deleting
 router.delete('/:id', auth, async (req, res) => {
   try {
-    await pool.query('DELETE FROM employees WHERE id = $1', [req.params.id]);
-    res.json({ message: 'Employee deleted!' });
+    const result = await pool.query(
+      `UPDATE employees SET status='Inactive' WHERE id=$1 RETURNING *`,
+      [req.params.id]
+    );
+    if (!result.rows[0]) {
+      return res.status(404).json({ message: 'Employee not found' });
+    }
+    res.json({ message: 'Employee deactivated successfully!' });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
