@@ -8,12 +8,11 @@ router.get('/attendance', auth, async (req, res) => {
   const { start_date, end_date, employee_id } = req.query;
   try {
     let query = `
-      SELECT al.*, e.first_name, e.last_name, e.employee_no,
-      d.name as department_name
+      SELECT al.*, 
+             v.first_name, v.last_name, v.employee_no,
+             v.department_name
       FROM attendance_logs al
-      JOIN employees e ON al.employee_id = e.id
-      JOIN v_employee_current_employment v ON e.id = v.employee_id
-      JOIN departments d ON v.department_id = d.id
+      JOIN v_employee_current_employment v ON al.employee_id = v.employee_id
       WHERE al.log_date BETWEEN $1 AND $2
     `;
     const params = [start_date, end_date];
