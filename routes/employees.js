@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
+const bcrypt = require('bcryptjs');
 
 // GET all employees - using the view
 router.get('/', auth, async (req, res) => {
@@ -29,10 +30,14 @@ router.get('/:id', auth, async (req, res) => {
   }
 });
 
-// CREATE employee - requires user_id first
+// CREATE employee - full transaction (user + employee + employment record)
 router.post('/', auth, async (req, res) => {
   const {
-    user_id,
+    // User account info
+    email,
+    username,
+    role,
+    // Personal info
     employee_no,
     first_name,
     middle_name,
@@ -40,20 +45,84 @@ router.post('/', auth, async (req, res) => {
     date_of_birth,
     gender,
     civil_status,
-    nationality
+    nationality,
+    personal_email,
+    personal_phone,
+    // Employment info
+    position_id,
+    department_id,
+    employment_type,
+    work_setup,
+    hire_date,
+    basic_salary
   } = req.body;
 
+  const client = await pool.connect();
+
   try {
-    const result = await pool.query(
-      `INSERT INTO employees 
-        (user_id, employee_no, first_name, middle_name, last_name, date_of_birth, gender, civil_status, nationality) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
-       RETURNING *`,
-      [user_id, employee_no, first_name, middle_name, last_name, date_of_birth, gender, civil_status, nationality]
+    await client.query('BEGIN');
+
+    // 1. Check if email already exists
+    const emailCheck = await client.query(
+      'SELECT id FROM users WHERE email = $1',
+      [email]
     );
-    res.json(result.rows[0]);
+    if (emailCheck.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Email already exists!' });
+    }
+
+    // 2. Generate default password (first name + last 4 of employee_no)
+    const defaultPassword = `${first_name.toLowerCase()}${employee_no.slice(-4)}`;
+    const password_hash = await bcrypt.hash(defaultPassword, 10);
+
+    // 3. Create user account
+    const userResult = await client.query(
+      `INSERT INTO users (employee_no, username, email, password_hash, role)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id`,
+      [employee_no, username || email.split('@')[0], email, password_hash, role || 'Employee']
+    );
+    const user_id = userResult.rows[0].id;
+
+    // 4. Create employee record
+    const employeeResult = await client.query(
+      `INSERT INTO employees 
+        (user_id, employee_no, first_name, middle_name, last_name, 
+         date_of_birth, gender, civil_status, nationality,
+         personal_email, personal_phone)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       RETURNING id`,
+      [user_id, employee_no, first_name, middle_name, last_name,
+       date_of_birth, gender, civil_status, nationality || 'Filipino',
+       personal_email, personal_phone]
+    );
+    const employee_id = employeeResult.rows[0].id;
+
+    // 5. Create employment record
+    await client.query(
+      `INSERT INTO employment_records
+        (employee_id, position_id, department_id, employment_type,
+         work_setup, hire_date, effective_date, basic_salary, required_time_in)
+       VALUES ($1, $2, $3, $4, $5, $6, $6, $7, '08:00:00')`,
+      [employee_id, position_id, department_id, employment_type || 'Full-Time',
+       work_setup || 'On-site', hire_date, basic_salary]
+    );
+
+    await client.query('COMMIT');
+
+    res.status(201).json({
+      message: 'Employee created successfully!',
+      employee_id,
+      user_id,
+      default_password: defaultPassword
+    });
+
   } catch (err) {
+    await client.query('ROLLBACK');
     res.status(500).json({ message: 'Server error', error: err.message });
+  } finally {
+    client.release();
   }
 });
 
@@ -77,7 +146,8 @@ router.put('/:id', auth, async (req, res) => {
            personal_email=$6, personal_phone=$7
        WHERE id=$8 
        RETURNING *`,
-      [first_name, middle_name, last_name, civil_status, nationality, personal_email, personal_phone, req.params.id]
+      [first_name, middle_name, last_name, civil_status, nationality, 
+       personal_email, personal_phone, req.params.id]
     );
     if (!result.rows[0]) {
       return res.status(404).json({ message: 'Employee not found' });
@@ -88,7 +158,7 @@ router.put('/:id', auth, async (req, res) => {
   }
 });
 
-// SOFT DELETE - set status to Inactive instead of deleting
+// SOFT DELETE - set status to Inactive
 router.delete('/:id', auth, async (req, res) => {
   try {
     const result = await pool.query(
