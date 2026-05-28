@@ -58,11 +58,16 @@ router.post('/login', async (req, res) => {
     if (!isMatch) {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
-    
+    // NEW: fetch employee_id linked to this user
+    const empResult = await pool.query(
+      'SELECT id FROM employees WHERE user_id = $1', 
+      [user.id]
+    );
+    const employee_id = empResult.rows[0]?.id || null;
 
     // 3. Create the JWT token using DB data
     const token = jwt.sign(
-      { id: user.id, role: user.role, employee_no: user.employee_no },
+      { id: user.id, employee_id, role: user.role, employee_no: user.employee_no },
       process.env.JWT_SECRET,
       { expiresIn: '1d' }
     );
@@ -71,7 +76,9 @@ router.post('/login', async (req, res) => {
     res.json({ 
       token, 
       role: user.role, 
-      employee_no: user.employee_no 
+      employee_no: user.employee_no,
+      employee_id,        // NEW
+      email: user.email   // NEW
     });
 
   } catch (err) {
