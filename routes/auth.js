@@ -58,6 +58,9 @@ router.post('/login', async (req, res) => {
     if (!isMatch) {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
+    console.log("Stored hash:", user.password_hash);
+    console.log("Password received:", password);
+    console.log("Password match result:", isMatch);
     // NEW: fetch employee_id linked to this user
     const empResult = await pool.query(
       'SELECT id FROM employees WHERE user_id = $1', 
