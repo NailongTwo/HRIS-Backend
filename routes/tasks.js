@@ -49,8 +49,8 @@ router.post('/', auth, async (req, res) => {
       due_date, start_date, project, tags) 
       VALUES ($1, $2, $3, $4, 'To Do', $5, $6, $7, $8, $9) 
       RETURNING *`,
-      [title, description, assignee_id, assigned_by, 
-      priority || 'Medium', due_date, start_date, project, tags]
+      [title, description, assignee_id, assigned_by,
+        priority || 'Medium', due_date, start_date, project, tags]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -61,16 +61,18 @@ router.post('/', auth, async (req, res) => {
 // UPDATE task status
 router.put('/:id/status', auth, async (req, res) => {
   const { status } = req.body;
-
   try {
-    const completed_at = status === 'Done' ? 'NOW()' : 'NULL';
     const result = await pool.query(
       `UPDATE tasks 
-      SET status = $1, completed_at = ${completed_at}
-      WHERE id = $2 
-      RETURNING *`,
+       SET status = $1, 
+           completed_at = CASE WHEN $1 = 'Done' THEN NOW() ELSE NULL END
+       WHERE id = $2 
+       RETURNING *`,
       [status, req.params.id]
     );
+    if (!result.rows[0]) {
+      return res.status(404).json({ message: 'Task not found!' });
+    }
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });

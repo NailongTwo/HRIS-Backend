@@ -6,7 +6,8 @@ const app = express();
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: false
 }));
 app.use(express.json());
 
@@ -24,6 +25,9 @@ app.use('/api/positions', require('./routes/positions'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/documents', require('./routes/documents'));
 app.use('/api/reports', require('./routes/reports'));
+app.use('/api/roles', require('./routes/roles'));
+app.use('/api/announcements', require('./routes/announcements'));
+app.use('/api/audit-logs', require('./routes/auditLogs'));
 
 // Test route
 app.get('/', (req, res) => {
