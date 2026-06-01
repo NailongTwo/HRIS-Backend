@@ -20,6 +20,60 @@ router.get('/employee/:id', auth, async (req, res) => {
   }
 });
 
+// GET all pay periods
+router.get('/pay-periods/all', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM pay_periods ORDER BY start_date DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+// CREATE pay period
+router.post('/pay-periods', auth, async (req, res) => {
+  const { period_label, start_date, end_date, payment_date } = req.body;
+  try {
+    // Automatically derive fields if not provided
+    const start = new Date(start_date);
+    const year = start.getFullYear();
+    const month = start.getMonth() + 1;
+    const period_type = start.getDate() <= 15 ? '1st Half' : '2nd Half';
+
+    const result = await pool.query(
+      `INSERT INTO pay_periods 
+      (period_label, period_type, year, month, start_date, end_date, payment_date, is_finalized) 
+      VALUES ($1, $2, $3, $4, $5, $6, $7, false) 
+      RETURNING *`,
+      [period_label, period_type, year, month, start_date, end_date, payment_date]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+// FINALIZE/RELEASE pay period
+router.put('/pay-periods/:id/finalize', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `UPDATE pay_periods 
+      SET is_finalized = true 
+      WHERE id = $1 
+      RETURNING *`,
+      [req.params.id]
+    );
+    if (!result.rows[0]) {
+      return res.status(404).json({ message: 'Pay period not found' });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
 // GET single payslip with line items
 router.get('/:id', auth, async (req, res) => {
   try {
@@ -42,18 +96,6 @@ router.get('/:id', auth, async (req, res) => {
       payslip: payslip.rows[0],
       line_items: lineItems.rows
     });
-  } catch (err) {
-    res.status(500).json({ message: 'Server error', error: err.message });
-  }
-});
-
-// GET all pay periods
-router.get('/pay-periods/all', auth, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT * FROM pay_periods ORDER BY start_date DESC`
-    );
-    res.json(result.rows);
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
@@ -88,8 +130,9 @@ router.post('/', auth, async (req, res) => {
   } = req.body;
 
   try {
-    // Generate reference number PS-YYYY-MM-{period}-{employee_no}
-    const refNo = `PS-${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${employee_id.slice(0, 6)}`;
+    // Generate reference number PS-YYYY-MM-NNNN using a counter
+    const count = await pool.query('SELECT COUNT(*) FROM payslips');
+    const refNo = `PS-${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(parseInt(count.rows[0].count) + 1).padStart(4, '0')}`;
 
     const result = await pool.query(
       `INSERT INTO payslips 

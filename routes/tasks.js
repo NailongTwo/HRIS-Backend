@@ -49,8 +49,8 @@ router.post('/', auth, async (req, res) => {
       due_date, start_date, project, tags) 
       VALUES ($1, $2, $3, $4, 'To Do', $5, $6, $7, $8, $9) 
       RETURNING *`,
-      [title, description, assignee_id, assigned_by, 
-      priority || 'Medium', due_date, start_date, project, tags]
+      [title, description, assignee_id, assigned_by,
+        priority || 'Medium', due_date, start_date, project, tags]
     );
     res.json(result.rows[0]);
   } catch (err) {

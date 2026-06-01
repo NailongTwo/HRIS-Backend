@@ -3,7 +3,16 @@ const cors = require('cors');
 require('dotenv').config();
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: [
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'http://localhost:5175',
+    process.env.ADMIN_ORIGIN,
+    process.env.FRONTEND_ORIGIN
+  ].filter(Boolean),
+  credentials: true
+}));
 app.use(express.json());
 
 // Routes
@@ -20,6 +29,9 @@ app.use('/api/positions', require('./routes/positions'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/documents', require('./routes/documents'));
 app.use('/api/reports', require('./routes/reports'));
+app.use('/api/roles', require('./routes/roles'));
+app.use('/api/announcements', require('./routes/announcements'));
+app.use('/api/audit-logs', require('./routes/auditLogs'));
 
 // Test route
 app.get('/', (req, res) => {
