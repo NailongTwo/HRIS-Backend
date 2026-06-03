@@ -62,13 +62,15 @@ router.post('/', auth, async (req, res) => {
 router.put('/:id/status', auth, async (req, res) => {
   const { status } = req.body;
   try {
+    const completed_at = status === 'Done' ? new Date() : null;
+    
     const result = await pool.query(
       `UPDATE tasks 
        SET status = $1, 
-           completed_at = CASE WHEN $1 = 'Done' THEN NOW() ELSE NULL END
-       WHERE id = $2 
+           completed_at = $2
+       WHERE id = $3 
        RETURNING *`,
-      [status, req.params.id]
+      [status, completed_at, req.params.id]
     );
     if (!result.rows[0]) {
       return res.status(404).json({ message: 'Task not found!' });
