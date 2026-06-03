@@ -19,7 +19,7 @@ router.get('/', auth, async (req, res) => {
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
-  }
+  } 
 });
 
 // GET all leave types -- MOVED TO TOP before /:id routes
@@ -38,7 +38,7 @@ router.get('/types', auth, async (req, res) => {
 router.get('/employee/:id', auth, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT lr.*,
+      `SELECT lr.*,     
               lt.name as leave_type_name, lt.code as leave_type_code,
               lt.badge_bg_color, lt.badge_text_color, lt.badge_dot_color
        FROM leave_requests lr
@@ -146,19 +146,20 @@ router.put('/:id/status', auth, async (req, res) => {
 
 // CANCEL leave request
 router.put('/:id/cancel', auth, async (req, res) => {
-  const { cancelled_reason } = req.body;
   try {
     const result = await pool.query(
       `UPDATE leave_requests 
-       SET status = 'Cancelled', cancelled_reason = $1, cancelled_at = NOW()
-       WHERE id = $2 RETURNING *`,
-      [cancelled_reason, req.params.id]
+       SET status = 'Cancelled', cancelled_at = NOW()
+       WHERE id = $1 AND status = 'Pending'
+       RETURNING *`,
+      [req.params.id]
     );
     if (!result.rows[0]) {
-      return res.status(404).json({ message: 'Leave request not found!' });
+      return res.status(404).json({ message: 'Leave request not found or already processed!' });
     }
     res.json(result.rows[0]);
   } catch (err) {
+    console.error('Cancel error:', err.message);
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
