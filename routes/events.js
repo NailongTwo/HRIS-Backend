@@ -31,6 +31,31 @@ router.get('/types/all', auth, async (req, res) => {
   }
 });
 
+// POST new event type
+router.post('/types', auth, async (req, res) => {
+  const { name, description, color, is_active } = req.body;
+  try {
+    // Check if name already exists
+    const existing = await pool.query(
+      'SELECT id FROM event_types WHERE name = $1',
+      [name]
+    );
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ message: 'Event type already exists!' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO event_types (name, description, color, is_active)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [name, description, color, is_active ?? true]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
 // GET single event
 router.get('/:id', auth, async (req, res) => {
   try {
@@ -81,6 +106,7 @@ router.post('/', auth, async (req, res) => {
     );
     res.json(result.rows[0]);
   } catch (err) {
+    console.error('CREATE EVENT ERROR:', err.message);
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
