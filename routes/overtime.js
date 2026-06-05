@@ -98,7 +98,8 @@ router.post('/', auth, async (req, res) => {
 
 // APPROVE/REJECT overtime request
 router.put('/:id/status', auth, async (req, res) => {
-  const { status, approval_remarks, approved_by } = req.body;
+  const { status, approval_remarks } = req.body;
+  const approved_by = req.user.id;
 
   try {
     const result = await pool.query(

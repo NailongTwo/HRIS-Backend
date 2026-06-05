@@ -1,13 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
+const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
 const bcrypt = require('bcryptjs');
 
 // GET all employees - using the view
 router.get('/', auth, async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM v_employee_current_employment');
+    const result = await query('SELECT * FROM v_employee_current_employment');
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -17,7 +18,7 @@ router.get('/', auth, async (req, res) => {
 // GET single employee
 router.get('/:id', auth, async (req, res) => {
   try {
-    const result = await pool.query(
+    const result = await query(
       'SELECT * FROM v_employee_current_employment WHERE employee_id = $1',
       [req.params.id]
     );
@@ -139,7 +140,7 @@ router.put('/:id', auth, async (req, res) => {
   } = req.body;
 
   try {
-    const result = await pool.query(
+    const result = await query(
       `UPDATE employees 
        SET first_name=$1, middle_name=$2, last_name=$3, 
            civil_status=$4, nationality=$5, 
@@ -161,7 +162,7 @@ router.put('/:id', auth, async (req, res) => {
 // SOFT DELETE - set status to Inactive
 router.delete('/:id', auth, async (req, res) => {
   try {
-    const result = await pool.query(
+    const result = await query(
       `UPDATE employees SET status='Inactive' WHERE id=$1 RETURNING *`,
       [req.params.id]
     );

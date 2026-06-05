@@ -3,6 +3,21 @@ const router = express.Router();
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
 
+// GET all notifications for the authenticated user
+router.get('/', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM notifications 
+      WHERE recipient_id = $1 
+      ORDER BY created_at DESC`,
+      [req.user.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
 // GET all notifications by user
 router.get('/:user_id', auth, async (req, res) => {
   try {
