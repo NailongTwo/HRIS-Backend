@@ -82,15 +82,18 @@ router.post('/', auth, async (req, res) => {
     const count = await query('SELECT COUNT(*) FROM overtime_requests');
     const refNo = `OT-${new Date().getFullYear()}-${String(parseInt(count.rows[0].count) + 1).padStart(3, '0')}`;
 
-    const policy = await query(
-      `SELECT value FROM hr_policies WHERE key = $1`,
-      [day_type === 'Regular Day'
-        ? 'overtime.regular_day_multiplier'
-        : day_type === 'Rest Day'
-        ? 'overtime.rest_day_multiplier'
-        : 'overtime.holiday_multiplier']
-    );
-    const multiplier = policy.rows[0]?.value || '1.25';
+    let multiplier = 1.25;
+    try {
+      const policy = await query(
+        `SELECT value FROM hr_policies WHERE key = $1`,
+        [day_type === 'Regular Day'
+          ? 'overtime.regular_day_multiplier'
+          : day_type === 'Rest Day'
+          ? 'overtime.rest_day_multiplier'
+          : 'overtime.holiday_multiplier']
+      );
+      if (policy.rows[0]?.value) multiplier = parseFloat(policy.rows[0].value);
+    } catch { /* hr_policies may not exist — use default 1.25 */ }
 
     const result = await query(
       `INSERT INTO overtime_requests 
@@ -101,10 +104,11 @@ router.post('/', auth, async (req, res) => {
        RETURNING *`,
       [refNo, employee_id, ot_date, day_type || 'Regular Day',
        planned_start, planned_end, planned_hours,
-       reason, project_task, parseFloat(multiplier)]
+       reason, project_task || null, multiplier]
     );
     res.json(result.rows[0]);
   } catch (err) {
+    console.error('OT error:', err.message);
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
