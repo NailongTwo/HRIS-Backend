@@ -4,6 +4,28 @@ const pool = require('../config/db');
 const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
 
+// ── Helper: silent fire-and-forget notification insert ────────────────────────
+async function notify({ recipientId, type, title, message, entityType, entityId }) {
+  if (!recipientId) return;
+  try {
+    await query(
+      `INSERT INTO notifications (recipient_id, type, title, message, entity_type, entity_id)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [recipientId, type, title, message, entityType, entityId]
+    );
+  } catch (err) {
+    console.warn('[notify] Failed:', err.message);
+  }
+}
+
+// ── Helper: resolve employee_id → users.id ────────────────────────────────────
+async function getUserIdByEmployee(employeeId) {
+  try {
+    const r = await query('SELECT user_id FROM employees WHERE id = $1', [employeeId]);
+    return r.rows[0]?.user_id || null;
+  } catch { return null; }
+}
+
 // GET all leave requests - with employee details
 router.get('/', auth, async (req, res) => {
   try {
@@ -207,7 +229,7 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
-// APPROVE/REJECT leave request
+// APPROVE/REJECT leave request — auto-notifies employee
 router.put('/:id/status', auth, async (req, res) => {
   const { status, approval_remarks } = req.body;
   const approved_by = req.user.id;
@@ -215,13 +237,30 @@ router.put('/:id/status', auth, async (req, res) => {
     const result = await query(
       `UPDATE leave_requests 
        SET status = $1, approval_remarks = $2, approved_by = $3, approved_at = NOW()
-       WHERE id = $4 RETURNING *`,
+       WHERE id = $4
+       RETURNING *, 
+         (SELECT name FROM leave_types WHERE id = leave_requests.leave_type_id) AS leave_type_name`,
       [status, approval_remarks, approved_by, req.params.id]
     );
     if (!result.rows[0]) {
       return res.status(404).json({ message: 'Leave request not found!' });
     }
-    res.json(result.rows[0]);
+    const lr = result.rows[0];
+    res.json(lr);
+
+    // ── Fire-and-forget notification ──
+    const recipientId = await getUserIdByEmployee(lr.employee_id);
+    const dateRange = lr.start_date === lr.end_date
+      ? new Date(lr.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      : `${new Date(lr.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${new Date(lr.end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    await notify({
+      recipientId,
+      type: 'Leave',
+      title: `Leave Request ${status}`,
+      message: `Your ${lr.leave_type_name || 'leave'} request (${lr.reference_no}) for ${dateRange} has been ${status.toLowerCase()}.${approval_remarks ? ' Remarks: ' + approval_remarks : ''}`,
+      entityType: 'leave_request',
+      entityId: lr.id,
+    });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }

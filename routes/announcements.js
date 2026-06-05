@@ -3,6 +3,32 @@ const router = express.Router();
 const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
 
+// ── Notify all active employees about a new announcement ──────────────────────
+async function notifyAllEmployees({ title, annId, category }) {
+  try {
+    // Get all active employees who have a linked user account
+    const empRes = await query(
+      `SELECT user_id FROM employees WHERE status = 'Active' AND user_id IS NOT NULL`
+    );
+    if (!empRes.rows.length) return;
+
+    // Bulk insert one notification per employee in a single query
+    const values = empRes.rows.map((_, i) => `($${i * 6 + 1}, $${i * 6 + 2}, $${i * 6 + 3}, $${i * 6 + 4}, $${i * 6 + 5}, $${i * 6 + 6})`).join(', ');
+    const params = empRes.rows.flatMap(row => [
+      row.user_id, 'Announcement',
+      `New Announcement: ${title}`,
+      `A new ${category} announcement has been posted. Click to read more.`,
+      'announcement', annId
+    ]);
+    await query(
+      `INSERT INTO notifications (recipient_id, type, title, message, entity_type, entity_id) VALUES ${values}`,
+      params
+    );
+  } catch (err) {
+    console.warn('[notifyAllEmployees] Failed:', err.message);
+  }
+}
+
 // GET all announcements
 router.get('/', auth, async (req, res) => {
   try {
@@ -18,10 +44,9 @@ router.get('/', auth, async (req, res) => {
   }
 });
 
-// CREATE announcement
+// CREATE announcement — notifies all active employees
 router.post('/', auth, async (req, res) => {
   const { title, category, audience, body } = req.body;
-  // If the request has postedBy, use it; otherwise default to 'Admin'
   const postedBy = req.body.postedBy || 'Admin';
   
   try {
@@ -32,7 +57,11 @@ router.post('/', auth, async (req, res) => {
                  TO_CHAR(created_at, 'Mon DD, YYYY') AS date, status`,
       [title, category, audience, body, postedBy]
     );
-    res.status(201).json(result.rows[0]);
+    const ann = result.rows[0];
+    res.status(201).json(ann);
+
+    // ── Fire-and-forget: notify all active employees ──
+    await notifyAllEmployees({ title: ann.title, annId: ann.id, category: ann.category });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
