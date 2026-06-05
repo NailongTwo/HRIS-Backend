@@ -1,12 +1,12 @@
 const express = require('express');
 const router = express.Router();
-const pool = require('../config/db');
+const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
 
 // GET all announcements
 router.get('/', auth, async (req, res) => {
   try {
-    const result = await pool.query(
+    const result = await query(
       `SELECT id, title, category, audience, body, posted_by AS "postedBy", 
               TO_CHAR(created_at, 'Mon DD, YYYY') AS date, status
        FROM announcements
@@ -25,7 +25,7 @@ router.post('/', auth, async (req, res) => {
   const postedBy = req.body.postedBy || 'Admin';
   
   try {
-    const result = await pool.query(
+    const result = await query(
       `INSERT INTO announcements (title, category, audience, body, posted_by, status)
        VALUES ($1, $2, $3, $4, $5, 'Published')
        RETURNING id, title, category, audience, body, posted_by AS "postedBy", 
@@ -44,7 +44,7 @@ router.put('/:id', auth, async (req, res) => {
   const { title, category, audience, body } = req.body;
   
   try {
-    const result = await pool.query(
+    const result = await query(
       `UPDATE announcements
        SET title = $1, category = $2, audience = $3, body = $4, updated_at = NOW()
        WHERE id = $5
@@ -67,7 +67,7 @@ router.put('/:id', auth, async (req, res) => {
 router.delete('/:id', auth, async (req, res) => {
   const { id } = req.params;
   try {
-    const result = await pool.query(
+    const result = await query(
       `DELETE FROM announcements WHERE id = $1 RETURNING id`,
       [id]
     );

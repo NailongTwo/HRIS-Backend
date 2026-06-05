@@ -1,12 +1,12 @@
 const express = require('express');
 const router = express.Router();
-const pool = require('../config/db');
+const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
 
 // GET all notifications for the authenticated user
 router.get('/', auth, async (req, res) => {
   try {
-    const result = await pool.query(
+    const result = await query(
       `SELECT * FROM notifications 
       WHERE recipient_id = $1 
       ORDER BY created_at DESC`,
@@ -21,7 +21,7 @@ router.get('/', auth, async (req, res) => {
 // GET all notifications by user
 router.get('/:user_id', auth, async (req, res) => {
   try {
-    const result = await pool.query(
+    const result = await query(
       `SELECT * FROM notifications 
       WHERE recipient_id = $1 
       ORDER BY created_at DESC`,
@@ -36,7 +36,7 @@ router.get('/:user_id', auth, async (req, res) => {
 // GET unread notifications count
 router.get('/:user_id/unread', auth, async (req, res) => {
   try {
-    const result = await pool.query(
+    const result = await query(
       `SELECT COUNT(*) FROM notifications 
       WHERE recipient_id = $1 AND is_read = false`,
       [req.params.user_id]
@@ -50,7 +50,7 @@ router.get('/:user_id/unread', auth, async (req, res) => {
 // MARK notification as read
 router.put('/:id/read', auth, async (req, res) => {
   try {
-    const result = await pool.query(
+    const result = await query(
       `UPDATE notifications 
       SET is_read = true, read_at = NOW()
       WHERE id = $1 
@@ -66,7 +66,7 @@ router.put('/:id/read', auth, async (req, res) => {
 // MARK all notifications as read
 router.put('/:user_id/read-all', auth, async (req, res) => {
   try {
-    await pool.query(
+    await query(
       `UPDATE notifications 
       SET is_read = true, read_at = NOW()
       WHERE recipient_id = $1 AND is_read = false`,
@@ -91,7 +91,7 @@ router.post('/', auth, async (req, res) => {
   } = req.body;
 
   try {
-    const result = await pool.query(
+    const result = await query(
       `INSERT INTO notifications 
       (recipient_id, type, title, message, entity_type, entity_id, action_url) 
       VALUES ($1, $2, $3, $4, $5, $6, $7) 
@@ -107,7 +107,7 @@ router.post('/', auth, async (req, res) => {
 // ARCHIVE notification
 router.put('/:id/archive', auth, async (req, res) => {
   try {
-    const result = await pool.query(
+    const result = await query(
       `UPDATE notifications 
       SET is_archived = true
       WHERE id = $1 
