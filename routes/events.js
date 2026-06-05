@@ -159,4 +159,38 @@ router.delete('/:id', auth, async (req, res) => {
   }
 });
 
+// UPDATE event type
+router.put('/types/:id', auth, async (req, res) => {
+  const { name, description, color, is_active } = req.body;
+  try {
+    const result = await pool.query(
+      `UPDATE event_types 
+       SET name = $1, description = $2, color = $3, is_active = $4
+       WHERE id = $5 
+       RETURNING *`,
+      [name, description, color, is_active, req.params.id]
+    );
+    if (!result.rows[0]) {
+      return res.status(404).json({ message: 'Event type not found' });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+// DELETE event type (soft delete)
+router.delete('/types/:id', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'UPDATE event_types SET is_active = false WHERE id = $1 RETURNING *',
+      [req.params.id]
+    );
+    if (!result.rows[0]) {
+      return res.status(404).json({ message: 'Event type not found' });
+    }
+    res.json({ message: 'Event type disabled successfully!' });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
 module.exports = router;
