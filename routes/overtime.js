@@ -62,22 +62,8 @@ router.post('/', auth, async (req, res) => {
   } = req.body;
 
   try {
-    // Generate reference number OT-YYYY-NNN
     const count = await pool.query('SELECT COUNT(*) FROM overtime_requests');
     const refNo = `OT-${new Date().getFullYear()}-${String(parseInt(count.rows[0].count) + 1).padStart(3, '0')}`;
-
-    // Get OT rate multiplier from hr_policies
-    const policy = await pool.query(
-      `SELECT value FROM hr_policies 
-       WHERE key = $1`,
-      [day_type === 'Regular Day' 
-        ? 'overtime.regular_day_multiplier' 
-        : day_type === 'Rest Day'
-        ? 'overtime.rest_day_multiplier'
-        : 'overtime.holiday_multiplier']
-    );
-
-    const multiplier = policy.rows[0]?.value || '1.25';
 
     const result = await pool.query(
       `INSERT INTO overtime_requests 
@@ -88,10 +74,11 @@ router.post('/', auth, async (req, res) => {
        RETURNING *`,
       [refNo, employee_id, ot_date, day_type || 'Regular Day',
        planned_start, planned_end, planned_hours,
-       reason, project_task, parseFloat(multiplier)]
+       reason, project_task || null, 1.25]
     );
     res.json(result.rows[0]);
   } catch (err) {
+    console.error('OT error:', err.message);
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
