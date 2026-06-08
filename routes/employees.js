@@ -130,25 +130,22 @@ router.post('/', auth, async (req, res) => {
 // UPDATE employee
 router.put('/:id', auth, async (req, res) => {
   const {
-    first_name,
-    middle_name,
-    last_name,
-    civil_status,
-    nationality,
-    personal_email,
-    personal_phone
+    first_name, middle_name, last_name,
+    date_of_birth, gender, civil_status,
+    nationality, personal_email, personal_phone
   } = req.body;
 
   try {
     const result = await query(
       `UPDATE employees 
-       SET first_name=$1, middle_name=$2, last_name=$3, 
-           civil_status=$4, nationality=$5, 
-           personal_email=$6, personal_phone=$7
-       WHERE id=$8 
+       SET first_name=$1, middle_name=$2, last_name=$3,
+           date_of_birth=$4, gender=$5, civil_status=$6,
+           nationality=$7, personal_email=$8, personal_phone=$9
+       WHERE id=$10 
        RETURNING *`,
-      [first_name, middle_name, last_name, civil_status, nationality, 
-       personal_email, personal_phone, req.params.id]
+      [first_name, middle_name, last_name,
+       date_of_birth, gender, civil_status,
+       nationality, personal_email, personal_phone, req.params.id]
     );
     if (!result.rows[0]) {
       return res.status(404).json({ message: 'Employee not found' });
