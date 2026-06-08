@@ -24,6 +24,7 @@ app.use('/api/departments', require('./routes/departments'));
 app.use('/api/positions', require('./routes/positions'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/documents', require('./routes/documents'));
+app.use('/api/doc-requirements', require('./routes/docRequirements'));
 app.use('/api/reports', require('./routes/reports'));
 app.use('/api/roles', require('./routes/roles'));
 app.use('/api/announcements', require('./routes/announcements'));

@@ -3,6 +3,32 @@ const router = express.Router();
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
 
+// GET all payslips (admin view) — optionally filter by pay_period_id
+router.get('/', auth, async (req, res) => {
+  try {
+    const { pay_period_id } = req.query;
+    let query = `
+      SELECT ps.*,
+             pp.period_label, pp.start_date, pp.end_date, pp.payment_date,
+             e.employee_no,
+             CONCAT(e.first_name, ' ', e.last_name) AS employee_name
+      FROM payslips ps
+      JOIN pay_periods pp ON ps.pay_period_id = pp.id
+      JOIN employees   e  ON ps.employee_id   = e.id
+    `;
+    const params = [];
+    if (pay_period_id) {
+      params.push(pay_period_id);
+      query += ` WHERE ps.pay_period_id = $1`;
+    }
+    query += ' ORDER BY pp.start_date DESC, e.last_name ASC';
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
 // GET all payslips by employee
 router.get('/employee/:id', auth, async (req, res) => {
   try {
@@ -69,6 +95,54 @@ router.put('/pay-periods/:id/finalize', auth, async (req, res) => {
       return res.status(404).json({ message: 'Pay period not found' });
     }
     res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+// DOWNLOAD payslip as PDF — returns stored pdf_url or structured data
+router.get('/:id/download', auth, async (req, res) => {
+  try {
+    const payslip = await pool.query(
+      `SELECT ps.*,
+              pp.period_label, pp.start_date, pp.end_date, pp.payment_date,
+              e.employee_no,
+              CONCAT(e.first_name, ' ', e.last_name) AS employee_name,
+              d.name AS department_name,
+              p.title AS position_title
+       FROM payslips ps
+       JOIN pay_periods pp ON ps.pay_period_id = pp.id
+       JOIN employees   e  ON ps.employee_id   = e.id
+       LEFT JOIN employment_records er ON er.employee_id = e.id AND (er.end_date IS NULL OR er.end_date > NOW())
+       LEFT JOIN departments d ON er.department_id = d.id
+       LEFT JOIN positions   p ON er.position_id   = p.id
+       WHERE ps.id = $1`,
+      [req.params.id]
+    );
+
+    if (!payslip.rows[0]) {
+      return res.status(404).json({ message: 'Payslip not found' });
+    }
+
+    const lineItems = await pool.query(
+      'SELECT * FROM payslip_line_items WHERE payslip_id = $1 ORDER BY sort_order ASC',
+      [req.params.id]
+    );
+
+    const data = payslip.rows[0];
+
+    // If a stored pdf_url exists (data URI or signed URL), redirect/return it
+    if (data.pdf_url) {
+      // If it's a data URI, send it back; client will open in new tab
+      return res.json({ type: 'url', url: data.pdf_url });
+    }
+
+    // Otherwise return structured data so the client can generate the PDF
+    res.json({
+      type: 'data',
+      payslip: data,
+      line_items: lineItems.rows
+    });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
