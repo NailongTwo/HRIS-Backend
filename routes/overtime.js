@@ -49,27 +49,22 @@ router.get('/', auth, async (req, res) => {
 router.get('/employee/:id', auth, async (req, res) => {
   try {
     const result = await query(
-      `SELECT * FROM overtime_requests 
-       WHERE employee_id = $1 
-       ORDER BY submitted_at DESC`,
+      `SELECT ot.*, 
+              CASE 
+                WHEN e.first_name IS NOT NULL 
+                THEN CONCAT(e.first_name, ' ', e.last_name)
+                ELSE u.username
+              END as approved_by_name
+       FROM overtime_requests ot
+       LEFT JOIN users u ON ot.approved_by = u.id
+       LEFT JOIN employees e ON u.id = e.user_id
+       WHERE ot.employee_id = $1 
+       ORDER BY ot.submitted_at DESC`,
       [req.params.id]
     );
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ message: 'Server error', error: err.message });
-  }
-});
-
-// GET pending approvals - using the view
-router.get('/pending', auth, async (req, res) => {
-  try {
-    const result = await query(
-      `SELECT * FROM v_pending_approvals 
-       WHERE request_type = 'overtime_request'
-       ORDER BY submitted_at DESC`
-    );
-    res.json(result.rows);
-  } catch (err) {
+    console.error('OT employee error:', err.message);
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
