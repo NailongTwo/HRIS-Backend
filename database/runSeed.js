@@ -2,13 +2,23 @@ const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
 
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
+
+const poolConfig = process.env.DIRECT_URL
+  ? { connectionString: process.env.DIRECT_URL }
+  : {
+      host: 'aws-1-ap-southeast-1.pooler.supabase.com',
+      port: 5432,
+      database: 'postgres',
+      user: 'postgres.hzopojcqjypasauqkzwc',
+      password: 'ox9Poh9qg9lw1nb2',
+    };
+
 const pool = new Pool({
-  host: 'dpg-d7tc6h67r5hc738jb3b0-a.oregon-postgres.render.com',
-  user: 'user',
-  password: 'cQFMtpi99QcVDUq5Uu7YgfH22ckAn9YN',
-  database: 'hris_db_tb2f',
-  port: 5432,
-  ssl: { rejectUnauthorized: false }
+  ...poolConfig,
+  ssl: {
+    rejectUnauthorized: false,
+  },
 });
 
 async function runSeed() {
