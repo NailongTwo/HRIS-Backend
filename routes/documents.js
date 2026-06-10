@@ -3,6 +3,13 @@ const router = express.Router();
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
 const multer = require('multer');
+const { createClient } = require('@supabase/supabase-js');
+
+// Initialize Supabase Client
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
 // multer: memory storage — file buffer kept in req.file.buffer
 const storage = multer.memoryStorage();
@@ -71,7 +78,7 @@ router.get('/employee/:id', auth, async (req, res) => {
       `SELECT ed.*, dt.name as document_type_name, dt.category
       FROM employee_documents ed
       JOIN document_types dt ON ed.document_type_id = dt.id
-      WHERE ed.employee_id = $1 AND ed.is_current = true
+      WHERE ed.employee_id = $1 AND ed.is_current = true AND ed.status = 'Complete'
       ORDER BY dt.name ASC`,
       [req.params.id]
     );
@@ -80,6 +87,7 @@ router.get('/employee/:id', auth, async (req, res) => {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
+
 
 // ─── GET single document ───────────────────────────────────────────────────────
 router.get('/:id', auth, async (req, res) => {
@@ -112,9 +120,6 @@ router.post('/upload', auth, upload.single('file'), async (req, res) => {
       return res.status(400).json({ message: 'No file was uploaded.' });
     }
 
-    // Encode file buffer as base64 data URI for storage in DB
-    const base64 = req.file.buffer.toString('base64');
-    const dataUri = `data:${req.file.mimetype};base64,${base64}`;
     const fileSizeKb = Math.round(req.file.size / 1024);
 
     // Get current version number for this employee + document type
@@ -126,6 +131,30 @@ router.post('/upload', auth, upload.single('file'), async (req, res) => {
     );
     const newVersion = (versionResult.rows[0].max_version || 0) + 1;
 
+    // Construct structured unique file path inside the bucket
+    const cleanedFileName = req.file.originalname.replace(/[^a-zA-Z0-9.]/g, '_');
+    const filePath = `emp_${employee_id}/${document_type_id}_v${newVersion}_${Date.now()}_${cleanedFileName}`;
+
+    // Upload buffer to Supabase Storage Bucket
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from('hris-files')
+      .upload(filePath, req.file.buffer, {
+        contentType: req.file.mimetype,
+        upsert: true
+      });
+
+    if (uploadError) {
+      console.error('Supabase upload error:', uploadError.message);
+      return res.status(500).json({ message: 'Cloud storage upload failed.', error: uploadError.message });
+    }
+
+    // Retrieve the public URL for the newly uploaded file
+    const { data: urlData } = supabase.storage
+      .from('hris-files')
+      .getPublicUrl(filePath);
+
+    const fileUrl = urlData.publicUrl;
+
     // Mark any previous versions as not current
     await pool.query(
       `UPDATE employee_documents
@@ -134,6 +163,7 @@ router.post('/upload', auth, upload.single('file'), async (req, res) => {
       [employee_id, document_type_id]
     );
 
+    // Insert new document metadata & public url into DB
     const result = await pool.query(
       `INSERT INTO employee_documents
        (employee_id, document_type_id, file_name, file_url, file_size_kb,
@@ -142,11 +172,16 @@ router.post('/upload', auth, upload.single('file'), async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9, 'Pending', $10)
        RETURNING *`,
       [
-        employee_id, document_type_id,
-        req.file.originalname, dataUri, fileSizeKb,
-        req.file.mimetype, newVersion,
-        issued_date || null, expiry_date || null,
-        uploaded_by || null
+        employee_id,
+        document_type_id,
+        req.file.originalname,
+        fileUrl, // Saves the Supabase Public URL instead of Base64
+        fileSizeKb,
+        req.file.mimetype,
+        newVersion,
+        issued_date || null,
+        expiry_date || null,
+        uploaded_by || req.user.id
       ]
     );
     res.json(result.rows[0]);
@@ -157,6 +192,7 @@ router.post('/upload', auth, upload.single('file'), async (req, res) => {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
+
 
 // ─── UPDATE document status ────────────────────────────────────────────────────
 router.put('/:id/status', auth, async (req, res) => {
