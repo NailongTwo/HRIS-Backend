@@ -2,6 +2,25 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
+const multer = require('multer');
+const { createClient } = require('@supabase/supabase-js');
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'];
+    if (allowed.includes(file.mimetype)) cb(null, true);
+    else cb(new Error('Only PDF, JPG, and PNG files are allowed.'));
+  }
+});
+
 
 // GET all payslips (admin view) — optionally filter by pay_period_id
 router.get('/', auth, async (req, res) => {
@@ -226,6 +245,59 @@ router.post('/', auth, async (req, res) => {
     );
     res.json(result.rows[0]);
   } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+// UPLOAD payslip PDF to Supabase and mark as released
+router.post('/:id/upload', auth, upload.single('file'), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Fetch existing payslip to get employee_id
+    const existing = await pool.query('SELECT * FROM payslips WHERE id = $1', [id]);
+    if (!existing.rows[0]) return res.status(404).json({ message: 'Payslip not found' });
+    const { employee_id } = existing.rows[0];
+
+    let pdfUrl = null;
+    let pdfFileName = null;
+
+    if (req.file) {
+      const cleanedName = req.file.originalname.replace(/[^a-zA-Z0-9.]/g, '_');
+      const filePath = `payslips/emp_${employee_id}_ps_${id}_${Date.now()}_${cleanedName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('hris-files')
+        .upload(filePath, req.file.buffer, {
+          contentType: req.file.mimetype,
+          upsert: true
+        });
+
+      if (uploadError) {
+        console.error('Supabase upload error:', uploadError.message);
+        return res.status(500).json({ message: 'Cloud storage upload failed.', error: uploadError.message });
+      }
+
+      const { data: urlData } = supabase.storage.from('hris-files').getPublicUrl(filePath);
+      pdfUrl = urlData.publicUrl;
+      pdfFileName = req.file.originalname;
+    }
+
+    // Mark payslip as released; store pdf_url if file was provided
+    const updateFields = pdfUrl
+      ? `is_released = true, released_at = NOW(), pdf_url = $2, pdf_file_name = $3`
+      : `is_released = true, released_at = NOW()`;
+
+    const params = pdfUrl ? [id, pdfUrl, pdfFileName] : [id];
+    const result = await pool.query(
+      `UPDATE payslips SET ${updateFields} WHERE id = $1 RETURNING *`,
+      params
+    );
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    if (err.message?.includes('Only PDF')) {
+      return res.status(400).json({ message: err.message });
+    }
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
