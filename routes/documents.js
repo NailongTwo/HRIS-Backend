@@ -78,7 +78,7 @@ router.get('/employee/:id', auth, async (req, res) => {
       `SELECT ed.*, dt.name as document_type_name, dt.category
       FROM employee_documents ed
       JOIN document_types dt ON ed.document_type_id = dt.id
-      WHERE ed.employee_id = $1 AND ed.is_current = true
+      WHERE ed.employee_id = $1 AND ed.is_current = true AND ed.status = 'Complete'
       ORDER BY dt.name ASC`,
       [req.params.id]
     );
@@ -87,6 +87,7 @@ router.get('/employee/:id', auth, async (req, res) => {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
+
 
 // ─── GET single document ───────────────────────────────────────────────────────
 router.get('/:id', auth, async (req, res) => {
