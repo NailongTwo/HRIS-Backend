@@ -136,7 +136,7 @@ router.post('/upload', auth, upload.single('file'), async (req, res) => {
 
     // Upload buffer to Supabase Storage Bucket
     const { data: uploadData, error: uploadError } = await supabase.storage
-      .from('employee-documents')
+      .from('hris-files')
       .upload(filePath, req.file.buffer, {
         contentType: req.file.mimetype,
         upsert: true
@@ -149,7 +149,7 @@ router.post('/upload', auth, upload.single('file'), async (req, res) => {
 
     // Retrieve the public URL for the newly uploaded file
     const { data: urlData } = supabase.storage
-      .from('employee-documents')
+      .from('hris-files')
       .getPublicUrl(filePath);
 
     const fileUrl = urlData.publicUrl;
