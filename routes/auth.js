@@ -13,7 +13,14 @@ router.post('/login', async (req, res) => {
   console.log(`Attempting login for: [${email}]`);
 
   try {
-    const userResult = await queryWithRetry('SELECT * FROM users WHERE email = $1', [email]);
+    // Join with roles table to fetch dynamic role name
+    const userResult = await queryWithRetry(
+      `SELECT u.*, r.name as role_name 
+       FROM users u 
+       LEFT JOIN roles r ON u.role_id = r.id 
+       WHERE u.email = $1`, 
+      [email]
+    );
 
     if (userResult.rows.length === 0) {
       console.log("No user found with that email in DB.");
@@ -37,16 +44,19 @@ router.post('/login', async (req, res) => {
     );
     const employee_id = empResult.rows[0]?.id || null;
 
+    // Use dynamic role name, default to enum value if role_id not linked
+    const roleName = user.role_name || user.role;
+
     // Create JWT token
     const token = jwt.sign(
-      { id: user.id, employee_id, role: user.role, employee_no: user.employee_no },
+      { id: user.id, employee_id, role: roleName, employee_no: user.employee_no },
       process.env.JWT_SECRET,
       { expiresIn: '1d' }
     );
 
     res.json({
       token,
-      role: user.role,
+      role: roleName,
       employee_no: user.employee_no,
       employee_id,
       email: user.email
@@ -66,7 +76,8 @@ router.get('/me', auth, async (req, res) => {
           u.id        AS user_id,
           u.email,
           u.username,
-          u.role,
+          u.role_id,
+          COALESCE(r.name, u.role::text) AS role,
           u.employee_no,
           e.id        AS employee_id,
           e.first_name,
@@ -82,6 +93,7 @@ router.get('/me', auth, async (req, res) => {
           p.title     AS position_title,
           d.name      AS department_name
        FROM users u
+       LEFT JOIN roles r              ON u.role_id = r.id
        LEFT JOIN employees e          ON u.id = e.user_id
        LEFT JOIN employment_records er ON e.id = er.employee_id AND er.end_date IS NULL
        LEFT JOIN positions p           ON er.position_id = p.id
@@ -121,13 +133,14 @@ router.put('/profile', auth, async (req, res) => {
 
     // Re-fetch fresh profile
     const result = await queryWithRetry(
-      `SELECT u.id AS user_id, u.email, u.username, u.role, u.employee_no,
+      `SELECT u.id AS user_id, u.email, u.username, u.role_id, COALESCE(r.name, u.role::text) AS role, u.employee_no,
               e.id AS employee_id, e.first_name, e.last_name,
               e.date_of_birth, e.gender, e.civil_status,
               e.personal_phone, e.personal_email,
               er.hire_date, er.employment_type, er.work_setup,
               p.title AS position_title, d.name AS department_name
          FROM users u
+         LEFT JOIN roles r              ON u.role_id = r.id
          LEFT JOIN employees e          ON u.id = e.user_id
          LEFT JOIN employment_records er ON e.id = er.employee_id AND er.end_date IS NULL
          LEFT JOIN positions p           ON er.position_id = p.id
@@ -165,6 +178,29 @@ router.put('/change-password', auth, async (req, res) => {
   } catch (err) {
     console.error('PUT /change-password error:', err.message);
     res.status(500).json({ message: 'Failed to change password.', error: err.message });
+  }
+});
+
+// GET /api/auth/my-permissions — returns the logged-in user's dynamic permission schema
+router.get('/my-permissions', auth, async (req, res) => {
+  try {
+    const query = `
+      SELECT 
+        m.code as module_code,
+        COALESCE(rp.can_view, false) as can_view,
+        COALESCE(rp.can_create, false) as can_create,
+        COALESCE(rp.can_edit, false) as can_edit,
+        COALESCE(rp.can_delete, false) as can_delete
+      FROM modules m
+      JOIN users u ON u.id = $1
+      LEFT JOIN role_permissions rp ON rp.module_id = m.id AND rp.role_id = u.role_id
+      ORDER BY m.parent_group, m.sort_order;
+    `;
+    const result = await pool.query(query, [req.user.id]);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Fetch My Permissions Error:', err);
+    res.status(500).json({ message: 'Failed to retrieve permissions.', error: err.message });
   }
 });
 
