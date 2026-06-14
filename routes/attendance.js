@@ -132,68 +132,95 @@ router.get('/employee/:id', auth, async (req, res) => {
 });
 
 // ─── GET attendance summary for payslip generation ────────────────────────────
+// Fixed version that correctly joins leave_requests and overtime_requests tables
 // Query params: employee_id, start_date, end_date
 router.get('/summary', auth, async (req, res) => {
   try {
     const { employee_id, start_date, end_date } = req.query;
-
+ 
     if (!employee_id || !start_date || !end_date) {
       return res.status(400).json({
         message: 'employee_id, start_date, and end_date are required'
       });
     }
-
-    // Aggregate attendance within the period's date range
-    const result = await pool.query(`
+ 
+    // Step 1: Get attendance stats from attendance_logs
+    const attendanceRes = await pool.query(`
       SELECT
         COUNT(*) FILTER (
           WHERE flag IN ('On Time','Late','Undertime','Half Day','Work From Home')
         ) AS days_worked,
         COUNT(*) FILTER (WHERE flag = 'Absent')    AS days_absent,
-        COUNT(*) FILTER (WHERE flag = 'On Leave')  AS days_leave,
         COUNT(*) FILTER (WHERE flag = 'Holiday')   AS days_holiday,
-        COALESCE(SUM(
-          CASE WHEN hours_worked > 8 THEN hours_worked - 8 ELSE 0 END
-        ), 0) AS ot_hours,
         COALESCE(SUM(late_mins), 0) AS late_mins_total
       FROM attendance_logs
       WHERE employee_id = $1
         AND log_date >= $2
         AND log_date <= $3
     `, [employee_id, start_date, end_date]);
-
-    const row = result.rows[0];
-
-    // Fetch daily_rate and hourly_rate from active compensation record
+ 
+    // Step 2: Get APPROVED leave days from leave_requests (not attendance_logs)
+    const leaveRes = await pool.query(`
+      SELECT COALESCE(SUM(total_days), 0) AS total_leave_days
+      FROM leave_requests
+      WHERE employee_id = $1
+        AND status = 'Approved'
+        AND NOT (end_date < $2 OR start_date > $3)
+    `, [employee_id, start_date, end_date]);
+ 
+    // Step 3: Get APPROVED OT hours from overtime_requests (not attendance_logs)
+    const otRes = await pool.query(`
+      SELECT COALESCE(SUM(planned_hours), 0) AS total_ot_hours
+      FROM overtime_requests
+      WHERE employee_id = $1
+        AND status = 'Approved'
+        AND ot_date BETWEEN $2 AND $3
+    `, [employee_id, start_date, end_date]);
+ 
+    // Step 4: Get compensation rates (daily_rate and hourly_rate)
     const compRes = await pool.query(`
       SELECT daily_rate, hourly_rate
       FROM compensation_records
       WHERE employee_id = $1 AND end_date IS NULL
       ORDER BY effective_date DESC LIMIT 1
     `, [employee_id]);
-
+ 
+    // Parse results
+    const attRow = attendanceRes.rows[0] || {};
+    const leaveRow = leaveRes.rows[0] || {};
+    const otRow = otRes.rows[0] || {};
     const comp = compRes.rows[0] || {};
+ 
     const dailyRate  = parseFloat(comp.daily_rate)  || 0;
-    const hourlyRate = parseFloat(comp.hourly_rate)  || 0;
-
-    const otHours     = parseFloat(row.ot_hours)        || 0;
-    const lateMins    = parseInt(row.late_mins_total)    || 0;
-    const daysAbsent  = parseInt(row.days_absent)        || 0;
-    const daysHoliday = parseInt(row.days_holiday)       || 0;
-
+    const hourlyRate = parseFloat(comp.hourly_rate) || 0;
+ 
+    const daysWorked    = parseInt(attRow.days_worked) || 0;
+    const daysAbsent    = parseInt(attRow.days_absent) || 0;
+    const daysLeave     = parseFloat(leaveRow.total_leave_days) || 0;
+    const daysHoliday   = parseInt(attRow.days_holiday) || 0;
+    const lateMins      = parseInt(attRow.late_mins_total) || 0;
+    const otHours       = parseFloat(otRow.total_ot_hours) || 0;
+ 
+    // Calculate pay values
+    const overtimePay   = (otHours * hourlyRate * 1.25).toFixed(2);
+    const holidayPay    = (daysHoliday * dailyRate).toFixed(2);
+    const lateDeduction = ((lateMins / 60) * hourlyRate).toFixed(2);
+    const absentDeduction = (daysAbsent * dailyRate).toFixed(2);
+ 
     res.json({
-      days_worked:      parseInt(row.days_worked) || 0,
+      days_worked:      daysWorked,
       days_absent:      daysAbsent,
-      days_leave:       parseInt(row.days_leave) || 0,
+      days_leave:       daysLeave,
+      days_holiday:     daysHoliday,
       ot_hours:         otHours,
       late_mins_total:  lateMins,
-      // Computed from rates
-      overtime_pay:     (otHours * hourlyRate * 1.25).toFixed(2),
-      holiday_pay:      (daysHoliday * dailyRate).toFixed(2),
-      late_deduction:   ((lateMins / 60) * hourlyRate).toFixed(2),
-      absent_deduction: (daysAbsent * dailyRate).toFixed(2),
+      overtime_pay:     overtimePay,
+      holiday_pay:      holidayPay,
+      late_deduction:   lateDeduction,
+      absent_deduction: absentDeduction,
     });
   } catch (err) {
+    console.error('Attendance summary error:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
