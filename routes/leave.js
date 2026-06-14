@@ -233,8 +233,25 @@ router.post('/', auth, async (req, res) => {
 router.put('/:id/status', auth, async (req, res) => {
   const { status, approval_remarks } = req.body;
   const approved_by = req.user.id;
+  
+  const client = await pool.connect();
   try {
-    const result = await query(
+    await client.query('BEGIN');
+    
+    // Get current status before update
+    const currentRes = await client.query(
+      `SELECT status FROM leave_requests WHERE id = $1`,
+      [req.params.id]
+    );
+    
+    if (currentRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Leave request not found!' });
+    }
+    
+    const oldStatus = currentRes.rows[0].status;
+    
+    const result = await client.query(
       `UPDATE leave_requests 
        SET status = $1, approval_remarks = $2, approved_by = $3, approved_at = NOW()
        WHERE id = $4
@@ -242,10 +259,55 @@ router.put('/:id/status', auth, async (req, res) => {
          (SELECT name FROM leave_types WHERE id = leave_requests.leave_type_id) AS leave_type_name`,
       [status, approval_remarks, approved_by, req.params.id]
     );
-    if (!result.rows[0]) {
-      return res.status(404).json({ message: 'Leave request not found!' });
-    }
+    
     const lr = result.rows[0];
+
+    // Handle attendance log records
+    if (status === 'Approved' && oldStatus !== 'Approved') {
+      const start = new Date(lr.start_date);
+      const end = new Date(lr.end_date);
+      
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const dateStr = d.toISOString().split('T')[0];
+        
+        // Only insert if no log exists, or update if it's currently marked as Absent
+        const logCheck = await client.query(
+          'SELECT id, flag FROM attendance_logs WHERE employee_id = $1 AND log_date = $2',
+          [lr.employee_id, dateStr]
+        );
+        
+        if (logCheck.rows.length === 0) {
+          await client.query(
+            `INSERT INTO attendance_logs (employee_id, log_date, source, flag, remarks) 
+             VALUES ($1, $2, 'System', 'On Leave', $3)`,
+            [lr.employee_id, dateStr, `Approved Leave: ${lr.leave_type_name}`]
+          );
+        } else if (logCheck.rows[0].flag === 'Absent') {
+          await client.query(
+            `UPDATE attendance_logs 
+             SET flag = 'On Leave', remarks = $1 
+             WHERE id = $2`,
+            [`Approved Leave: ${lr.leave_type_name}`, logCheck.rows[0].id]
+          );
+        }
+      }
+    } else if (oldStatus === 'Approved' && status !== 'Approved') {
+      const start = new Date(lr.start_date);
+      const end = new Date(lr.end_date);
+      
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const dateStr = d.toISOString().split('T')[0];
+        
+        // Remove the On Leave flag (either delete System logs, or set back to Absent)
+        await client.query(
+          `DELETE FROM attendance_logs 
+           WHERE employee_id = $1 AND log_date = $2 AND flag = 'On Leave'`,
+          [lr.employee_id, dateStr]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
     res.json(lr);
 
     // ── Fire-and-forget notification ──
@@ -262,7 +324,10 @@ router.put('/:id/status', auth, async (req, res) => {
       entityId: lr.id,
     });
   } catch (err) {
+    await client.query('ROLLBACK');
     res.status(500).json({ message: 'Server error', error: err.message });
+  } finally {
+    client.release();
   }
 });
 

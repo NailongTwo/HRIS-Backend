@@ -5,10 +5,16 @@ const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
 const bcrypt = require('bcryptjs');
 
-// GET all employees - using the view
+// GET all employees - using the view joined with users and roles
 router.get('/', auth, async (req, res) => {
   try {
-    const result = await query('SELECT * FROM v_employee_current_employment');
+    const result = await pool.query(`
+      SELECT v.*, u.role_id, COALESCE(r.name, u.role::text) as role
+      FROM v_employee_current_employment v
+      JOIN employees e ON v.employee_id = e.id
+      JOIN users u ON e.user_id = u.id
+      LEFT JOIN roles r ON u.role_id = r.id
+    `);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -18,10 +24,14 @@ router.get('/', auth, async (req, res) => {
 // GET single employee
 router.get('/:id', auth, async (req, res) => {
   try {
-    const result = await query(
-      'SELECT * FROM v_employee_current_employment WHERE employee_id = $1',
-      [req.params.id]
-    );
+    const result = await pool.query(`
+      SELECT v.*, u.role_id, COALESCE(r.name, u.role::text) as role
+      FROM v_employee_current_employment v
+      JOIN employees e ON v.employee_id = e.id
+      JOIN users u ON e.user_id = u.id
+      LEFT JOIN roles r ON u.role_id = r.id
+      WHERE v.employee_id = $1
+    `, [req.params.id]);
     if (!result.rows[0]) {
       return res.status(404).json({ message: 'Employee not found' });
     }
@@ -37,7 +47,7 @@ router.post('/', auth, async (req, res) => {
     // User account info
     email,
     username,
-    role,
+    role_id, // Accept role_id UUID instead of raw role enum
     // Personal info
     employee_no,
     first_name,
@@ -58,6 +68,11 @@ router.post('/', auth, async (req, res) => {
     basic_salary
   } = req.body;
 
+  // Validate required fields to avoid database constraint violations
+  if (!email || !employee_no || !first_name || !last_name || !gender || !civil_status || !date_of_birth || date_of_birth.trim() === '') {
+    return res.status(400).json({ message: 'Missing required personal details: email, employee number, first name, last name, date of birth, gender, and civil status are required.' });
+  }
+
   const client = await pool.connect();
 
   try {
@@ -77,12 +92,22 @@ router.post('/', auth, async (req, res) => {
     const defaultPassword = `${first_name.toLowerCase()}${employee_no.slice(-4)}`;
     const password_hash = await bcrypt.hash(defaultPassword, 10);
 
-    // 3. Create user account
+    // Look up the role name to populate the users.role enum column for backward compatibility
+    let roleName = 'Employee';
+    if (role_id) {
+      const roleRes = await client.query('SELECT name FROM roles WHERE id = $1', [role_id]);
+      if (roleRes.rows.length > 0) {
+        roleName = roleRes.rows[0].name;
+      }
+    }
+    const finalRoleId = role_id || (await client.query("SELECT id FROM roles WHERE name = 'Employee'")).rows[0]?.id || null;
+
+    // 3. Create user account with role_id link
     const userResult = await client.query(
-      `INSERT INTO users (employee_no, username, email, password_hash, role)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO users (employee_no, username, email, password_hash, role, role_id)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id`,
-      [employee_no, username || email.split('@')[0], email, password_hash, role || 'Employee']
+      [employee_no, username || email.split('@')[0], email, password_hash, roleName, finalRoleId]
     );
     const user_id = userResult.rows[0].id;
 
@@ -132,27 +157,67 @@ router.put('/:id', auth, async (req, res) => {
   const {
     first_name, middle_name, last_name,
     date_of_birth, gender, civil_status,
-    nationality, personal_email, personal_phone
+    nationality, personal_email, personal_phone,
+    role_id // Accept optional role_id update
   } = req.body;
 
+  // Sanitize: convert empty strings to null so PostgreSQL doesn't
+  // try to cast '' as a DATE/value, which violates NOT NULL constraints.
+  const safeDob = date_of_birth && date_of_birth.trim() !== '' ? date_of_birth : null;
+
+  const client = await pool.connect();
   try {
-    const result = await query(
+    await client.query('BEGIN');
+
+        // 1. Update employee record
+    // COALESCE for NOT NULL columns: if the client sends null/undefined/empty, keep the
+    // existing DB value to prevent NOT NULL constraint violations and support partial updates.
+    const result = await client.query(
       `UPDATE employees 
-       SET first_name=$1, middle_name=$2, last_name=$3,
-           date_of_birth=$4, gender=$5, civil_status=$6,
-           nationality=$7, personal_email=$8, personal_phone=$9
+       SET first_name     = COALESCE($1, first_name), 
+           middle_name    = $2, 
+           last_name      = COALESCE($3, last_name),
+           date_of_birth  = COALESCE($4::date, date_of_birth), 
+           gender         = COALESCE($5::gender_type, gender), 
+           civil_status   = COALESCE($6::civil_status_type, civil_status),
+           nationality    = COALESCE($7, nationality), 
+           personal_email = $8, 
+           personal_phone = $9
        WHERE id=$10 
        RETURNING *`,
       [first_name, middle_name, last_name,
-       date_of_birth, gender, civil_status,
+       safeDob, gender, civil_status,
        nationality, personal_email, personal_phone, req.params.id]
     );
-    if (!result.rows[0]) {
+
+    if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ message: 'Employee not found' });
     }
-    res.json(result.rows[0]);
+
+    const employee = result.rows[0];
+
+    // 2. Update user role link in users table if role_id is provided
+    if (role_id) {
+      const roleRes = await client.query('SELECT name FROM roles WHERE id = $1', [role_id]);
+      if (roleRes.rows.length > 0) {
+        const roleName = roleRes.rows[0].name;
+        await client.query(
+          `UPDATE users 
+           SET role_id = $1, role = $2
+           WHERE id = $3`,
+          [role_id, roleName, employee.user_id]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+    res.json(employee);
   } catch (err) {
+    await client.query('ROLLBACK');
     res.status(500).json({ message: 'Server error', error: err.message });
+  } finally {
+    client.release();
   }
 });
 
