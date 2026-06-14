@@ -116,6 +116,9 @@ router.get('/me', auth, async (req, res) => {
 // PUT /api/auth/profile — update logged-in admin's personal employee info
 router.put('/profile', auth, async (req, res) => {
   const { first_name, last_name, personal_phone, personal_email, civil_status, gender, date_of_birth } = req.body;
+  
+  const safeDob = date_of_birth && date_of_birth.trim() !== '' ? date_of_birth : null;
+
   try {
     // Update employee record tied to this user
     await queryWithRetry(
@@ -126,9 +129,9 @@ router.put('/profile', auth, async (req, res) => {
              personal_email = COALESCE($4, personal_email),
              civil_status   = COALESCE($5, civil_status),
              gender         = COALESCE($6, gender),
-             date_of_birth  = COALESCE($7, date_of_birth)
+             date_of_birth  = COALESCE($7::date, date_of_birth)
          WHERE user_id = $8`,
-      [first_name, last_name, personal_phone, personal_email, civil_status, gender, date_of_birth, req.user.id]
+      [first_name, last_name, personal_phone, personal_email, civil_status, gender, safeDob, req.user.id]
     );
 
     // Re-fetch fresh profile
@@ -204,4 +207,28 @@ router.get('/my-permissions', auth, async (req, res) => {
   }
 });
 
+// POST /api/auth/forgot-password
+router.post('/forgot-password', async (req, res) => {
+  const { email, newPassword } = req.body;
+  if (!email || !newPassword) {
+    return res.status(400).json({ message: 'Email and new password are required.' });
+  }
+  if (newPassword.length < 8) {
+    return res.status(400).json({ message: 'Password must be at least 8 characters long.' });
+  }
+  try {
+    const userResult = await queryWithRetry('SELECT id FROM users WHERE email = $1', [email]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Email address not found.' });
+    }
+    const hash = await bcrypt.hash(newPassword, 10);
+    await queryWithRetry('UPDATE users SET password_hash = $1 WHERE email = $2', [hash, email]);
+    res.json({ message: 'Password reset successfully.' });
+  } catch (err) {
+    console.error('forgot-password error:', err.message);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
 module.exports = router;
+

@@ -68,6 +68,11 @@ router.post('/', auth, async (req, res) => {
     basic_salary
   } = req.body;
 
+  // Validate required fields to avoid database constraint violations
+  if (!email || !employee_no || !first_name || !last_name || !gender || !civil_status || !date_of_birth || date_of_birth.trim() === '') {
+    return res.status(400).json({ message: 'Missing required personal details: email, employee number, first name, last name, date of birth, gender, and civil status are required.' });
+  }
+
   const client = await pool.connect();
 
   try {
@@ -156,20 +161,32 @@ router.put('/:id', auth, async (req, res) => {
     role_id // Accept optional role_id update
   } = req.body;
 
+  // Sanitize: convert empty strings to null so PostgreSQL doesn't
+  // try to cast '' as a DATE/value, which violates NOT NULL constraints.
+  const safeDob = date_of_birth && date_of_birth.trim() !== '' ? date_of_birth : null;
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    // 1. Update employee record
+        // 1. Update employee record
+    // COALESCE for NOT NULL columns: if the client sends null/undefined/empty, keep the
+    // existing DB value to prevent NOT NULL constraint violations and support partial updates.
     const result = await client.query(
       `UPDATE employees 
-       SET first_name=$1, middle_name=$2, last_name=$3,
-           date_of_birth=$4, gender=$5, civil_status=$6,
-           nationality=$7, personal_email=$8, personal_phone=$9
+       SET first_name     = COALESCE($1, first_name), 
+           middle_name    = $2, 
+           last_name      = COALESCE($3, last_name),
+           date_of_birth  = COALESCE($4::date, date_of_birth), 
+           gender         = COALESCE($5::gender_type, gender), 
+           civil_status   = COALESCE($6::civil_status_type, civil_status),
+           nationality    = COALESCE($7, nationality), 
+           personal_email = $8, 
+           personal_phone = $9
        WHERE id=$10 
        RETURNING *`,
       [first_name, middle_name, last_name,
-       date_of_birth, gender, civil_status,
+       safeDob, gender, civil_status,
        nationality, personal_email, personal_phone, req.params.id]
     );
 

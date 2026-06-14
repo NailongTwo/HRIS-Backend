@@ -4,9 +4,105 @@ const pool = require('../config/db');
 const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
 
+// Sync function to generate Absent and On Leave logs
+async function syncEmployeeAttendance(employeeId) {
+  try {
+    const empRes = await pool.query(
+      "SELECT hire_date, status FROM employees WHERE id = $1",
+      [employeeId]
+    );
+    if (empRes.rows.length === 0 || empRes.rows[0].status !== 'Active') return;
+    
+    const hireDate = empRes.rows[0].hire_date ? new Date(empRes.rows[0].hire_date) : null;
+    if (!hireDate) return;
+    
+    const startYear = new Date('2026-01-01');
+    const startDate = hireDate > startYear ? hireDate : startYear;
+    
+    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+    const today = new Date(todayStr);
+    
+    if (startDate > today) return;
+    
+    const startDateStr = startDate.toISOString().split('T')[0];
+    const todayStrParam = today.toISOString().split('T')[0];
+    
+    // Fetch existing logs
+    const logsRes = await pool.query(
+      "SELECT log_date::text, flag FROM attendance_logs WHERE employee_id = $1 AND log_date BETWEEN $2 AND $3",
+      [employeeId, startDateStr, todayStrParam]
+    );
+    const existingLogs = {};
+    logsRes.rows.forEach(r => {
+      existingLogs[r.log_date.substring(0, 10)] = r.flag;
+    });
+    
+    // Fetch approved leave requests
+    const leavesRes = await pool.query(
+      `SELECT start_date::text, end_date::text, lt.name as leave_type_name
+       FROM leave_requests lr
+       JOIN leave_types lt ON lr.leave_type_id = lt.id
+       WHERE lr.employee_id = $1 AND lr.status = 'Approved' 
+         AND NOT (lr.end_date < $2 OR lr.start_date > $3)`,
+      [employeeId, startDateStr, todayStrParam]
+    );
+    
+    const leaves = leavesRes.rows.map(r => ({
+      start: new Date(r.start_date.substring(0, 10)),
+      end: new Date(r.end_date.substring(0, 10)),
+      name: r.leave_type_name
+    }));
+    
+    const getApprovedLeave = (date) => {
+      const d = new Date(date.toISOString().split('T')[0]);
+      return leaves.find(l => d >= l.start && d <= l.end);
+    };
+    
+    for (let d = new Date(startDate); d <= today; d.setDate(d.getDate() + 1)) {
+      const dayOfWeek = d.getDay();
+      if (dayOfWeek === 0 || dayOfWeek === 6) continue; // Skip Saturday and Sunday
+      
+      const dateStr = d.toISOString().split('T')[0];
+      const leave = getApprovedLeave(d);
+      const isToday = dateStr === todayStrParam;
+      
+      if (!existingLogs[dateStr]) {
+        if (leave) {
+          await pool.query(
+            `INSERT INTO attendance_logs (employee_id, log_date, source, flag, remarks) 
+             VALUES ($1, $2, 'System', 'On Leave', $3)`,
+            [employeeId, dateStr, `Approved Leave: ${leave.name}`]
+          );
+        } else if (!isToday) {
+          await pool.query(
+            `INSERT INTO attendance_logs (employee_id, log_date, source, flag) 
+             VALUES ($1, $2, 'System', 'Absent')`,
+            [employeeId, dateStr]
+          );
+        }
+      } else if (existingLogs[dateStr] === 'Absent' && leave) {
+        await pool.query(
+          `UPDATE attendance_logs 
+           SET flag = 'On Leave', remarks = $1 
+           WHERE employee_id = $2 AND log_date = $3`,
+          [`Approved Leave: ${leave.name}`, employeeId, dateStr]
+        );
+      }
+    }
+  } catch (err) {
+    console.error(`[syncEmployeeAttendance] Error for employee ${employeeId}:`, err.message);
+  }
+}
+
 // GET all attendance logs
 router.get('/', auth, async (req, res) => {
   try {
+    // Sync all active employees
+    const activeEmps = await query("SELECT id FROM employees WHERE status = 'Active'");
+    for (const emp of activeEmps.rows) {
+      await syncEmployeeAttendance(emp.id);
+    }
+
     const result = await query(
       `SELECT al.*, 
               e.first_name, e.last_name, e.employee_no
@@ -23,6 +119,8 @@ router.get('/', auth, async (req, res) => {
 // GET attendance by employee
 router.get('/employee/:id', auth, async (req, res) => {
   try {
+    await syncEmployeeAttendance(req.params.id);
+
     const result = await query(
       'SELECT * FROM attendance_logs WHERE employee_id = $1 ORDER BY log_date DESC',
       [req.params.id]
@@ -36,6 +134,8 @@ router.get('/employee/:id', auth, async (req, res) => {
 // GET monthly summary - using the view
 router.get('/summary/:employee_id', auth, async (req, res) => {
   try {
+    await syncEmployeeAttendance(req.params.employee_id);
+
     const result = await query(
       `SELECT * FROM v_attendance_monthly_summary 
        WHERE employee_id = $1 
