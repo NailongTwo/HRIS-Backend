@@ -29,6 +29,7 @@ app.use('/api/reports', require('./routes/reports'));
 app.use('/api/roles', require('./routes/roles'));
 app.use('/api/announcements', require('./routes/announcements'));
 app.use('/api/audit-logs', require('./routes/auditLogs'));
+app.use('/api/feedback', require('./routes/feedback'));
 
 // Test route
 app.get('/', (req, res) => {
