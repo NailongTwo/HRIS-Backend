@@ -152,67 +152,93 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
-// UPDATE employee
+// UPDATE employee — full transaction: personal info + employment record + user role
 router.put('/:id', auth, async (req, res) => {
   const {
+    // Personal / contact
     first_name, middle_name, last_name,
     date_of_birth, gender, civil_status,
     nationality, personal_email, personal_phone,
-    role_id // Accept optional role_id update
+    // Employment
+    department_id, position_id,
+    employment_type, work_setup, basic_salary,
+    // Account
+    role_id
   } = req.body;
 
-  // Sanitize: convert empty strings to null so PostgreSQL doesn't
-  // try to cast '' as a DATE/value, which violates NOT NULL constraints.
-  const safeDob = date_of_birth && date_of_birth.trim() !== '' ? date_of_birth : null;
+  const safeDob = date_of_birth && String(date_of_birth).trim() !== '' ? date_of_birth : null;
+  const safeSalary = basic_salary !== undefined && basic_salary !== '' ? Number(basic_salary) : null;
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-        // 1. Update employee record
-    // COALESCE for NOT NULL columns: if the client sends null/undefined/empty, keep the
-    // existing DB value to prevent NOT NULL constraint violations and support partial updates.
-    const result = await client.query(
-      `UPDATE employees 
-       SET first_name     = COALESCE($1, first_name), 
-           middle_name    = $2, 
+    // 1. Update personal / contact info
+    const empResult = await client.query(
+      `UPDATE employees
+       SET first_name     = COALESCE($1, first_name),
+           middle_name    = $2,
            last_name      = COALESCE($3, last_name),
-           date_of_birth  = COALESCE($4::date, date_of_birth), 
-           gender         = COALESCE($5::gender_type, gender), 
+           date_of_birth  = COALESCE($4::date, date_of_birth),
+           gender         = COALESCE($5::gender_type, gender),
            civil_status   = COALESCE($6::civil_status_type, civil_status),
-           nationality    = COALESCE($7, nationality), 
-           personal_email = $8, 
-           personal_phone = $9
-       WHERE id=$10 
+           nationality    = COALESCE($7, nationality),
+           personal_email = $8,
+           personal_phone = $9,
+           updated_at     = NOW()
+       WHERE id = $10
        RETURNING *`,
       [first_name, middle_name, last_name,
        safeDob, gender, civil_status,
-       nationality, personal_email, personal_phone, req.params.id]
+       nationality, personal_email, personal_phone,
+       req.params.id]
     );
 
-    if (result.rows.length === 0) {
+    if (empResult.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ message: 'Employee not found' });
     }
 
-    const employee = result.rows[0];
+    const employee = empResult.rows[0];
 
-    // 2. Update user role link in users table if role_id is provided
+    // 2. Update the current (active) employment record
+    const hasEmploymentChange = department_id || position_id || employment_type || work_setup || safeSalary !== null;
+    if (hasEmploymentChange) {
+      await client.query(
+        `UPDATE employment_records
+         SET department_id   = COALESCE($1, department_id),
+             position_id     = COALESCE($2, position_id),
+             employment_type = COALESCE($3::employment_type, employment_type),
+             work_setup      = COALESCE($4::work_setup_type, work_setup),
+             basic_salary    = COALESCE($5, basic_salary),
+             updated_at      = NOW()
+         WHERE employee_id = $6
+           AND id = (
+             SELECT id FROM employment_records
+             WHERE employee_id = $6 AND end_date IS NULL
+             ORDER BY effective_date DESC
+             LIMIT 1
+           )`,
+        [department_id || null, position_id || null,
+         employment_type || null, work_setup || null,
+         safeSalary, req.params.id]
+      );
+    }
+
+    // 3. Update system role
     if (role_id) {
       const roleRes = await client.query('SELECT name FROM roles WHERE id = $1', [role_id]);
       if (roleRes.rows.length > 0) {
         const roleName = roleRes.rows[0].name;
         await client.query(
-          `UPDATE users 
-           SET role_id = $1, role = $2
-           WHERE id = $3`,
+          `UPDATE users SET role_id = $1, role = $2 WHERE id = $3`,
           [role_id, roleName, employee.user_id]
         );
       }
     }
 
     await client.query('COMMIT');
-    res.json(employee);
+    res.json({ message: 'Employee updated successfully!', employee });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -220,6 +246,7 @@ router.put('/:id', auth, async (req, res) => {
     client.release();
   }
 });
+
 
 // SOFT DELETE - set status to Inactive
 router.delete('/:id', auth, async (req, res) => {
