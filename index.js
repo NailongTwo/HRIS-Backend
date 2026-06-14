@@ -32,6 +32,7 @@ app.use('/api/audit-logs', require('./routes/auditLogs'));
 app.use('/api/feedback', require('./routes/feedback'));
 app.use('/api/recognitions', require('./routes/recognitions'));
 app.use('/api/surveys', require('./routes/surveys'));
+app.use('/api/compensation', require('./routes/compensation'));
 // Test route
 app.get('/', (req, res) => {
   res.json({ message: 'HRIS Backend is running!' });
