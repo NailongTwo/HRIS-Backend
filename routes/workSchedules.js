@@ -94,11 +94,14 @@ router.get('/:id', auth, async (req, res) => {
 
 // CREATE work schedule
 router.post('/', auth, async (req, res) => {
-  const { name, description, status, days } = req.body;
+  const { name, description, status, grace_period_minutes, days } = req.body;
 
   if (!name || !name.trim()) {
     return res.status(400).json({ message: 'Schedule name is required.' });
   }
+
+  const graceMins = parseInt(grace_period_minutes, 10);
+  const gracePeriodMinutes = !isNaN(graceMins) && graceMins >= 0 ? graceMins : 0;
 
   const client = await pool.connect();
   try {
@@ -112,10 +115,10 @@ router.post('/', auth, async (req, res) => {
     }
 
     const wsResult = await client.query(
-      `INSERT INTO work_schedules (name, description, status)
-       VALUES ($1, $2, $3)
+      `INSERT INTO work_schedules (name, description, status, grace_period_minutes)
+       VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [name, description, status || 'Active']
+      [name, description, status || 'Active', gracePeriodMinutes]
     );
     const scheduleId = wsResult.rows[0].id;
 
@@ -185,11 +188,14 @@ router.post('/', auth, async (req, res) => {
 // UPDATE work schedule
 router.put('/:id', auth, async (req, res) => {
   const { id } = req.params;
-  const { name, description, status, days } = req.body;
+  const { name, description, status, grace_period_minutes, days } = req.body;
 
   if (!name || !name.trim()) {
     return res.status(400).json({ message: 'Schedule name is required.' });
   }
+
+  const graceMins = parseInt(grace_period_minutes, 10);
+  const gracePeriodMinutes = !isNaN(graceMins) && graceMins >= 0 ? graceMins : 0;
 
   const client = await pool.connect();
   try {
@@ -216,10 +222,10 @@ router.put('/:id', auth, async (req, res) => {
 
     const wsResult = await client.query(
       `UPDATE work_schedules
-       SET name = $1, description = $2, status = $3, updated_at = NOW()
-       WHERE id = $4
+       SET name = $1, description = $2, status = $3, grace_period_minutes = $4, updated_at = NOW()
+       WHERE id = $5
        RETURNING *`,
-      [name, description, status, id]
+      [name, description, status, gracePeriodMinutes, id]
     );
 
     if (wsResult.rows.length === 0) {

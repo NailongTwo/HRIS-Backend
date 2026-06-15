@@ -47,10 +47,10 @@ async function getBusinessDateAndSchedule(employeeId, now = new Date()) {
 
   // Fetch the employee's schedule and grace period
   const scheduleRes = await pool.query(
-    `SELECT wsd.day_of_week, wsd.is_working, wsd.start_time, wsd.end_time, er.grace_period_mins
+    `SELECT wsd.day_of_week, wsd.is_working, wsd.start_time, wsd.end_time, ws.grace_period_minutes
      FROM employees e
-     JOIN work_schedule_days wsd ON e.work_schedule_id = wsd.work_schedule_id
-     JOIN employment_records er ON er.employee_id = e.id AND er.end_date IS NULL
+     JOIN work_schedules ws ON e.work_schedule_id = ws.id
+     JOIN work_schedule_days wsd ON ws.id = wsd.work_schedule_id
      WHERE e.id = $1`,
     [employeeId]
   );
@@ -73,19 +73,20 @@ async function getBusinessDateAndSchedule(employeeId, now = new Date()) {
       is_working: !['Saturday', 'Sunday'].includes(dayName),
       start_time: '08:00:00',
       end_time: '17:00:00',
-      grace_period_mins: 15
+      grace_period_minutes: 0
     };
   };
 
   const getShiftWindow = (dateStr, sched) => {
     if (!sched.is_working || !sched.start_time || !sched.end_time) return null;
-    const [year, month, day] = dateStr.split('-').map(Number);
-    const [startH, startM, startS] = sched.start_time.split(':').map(Number);
-    const [endH, endM, endS] = sched.end_time.split(':').map(Number);
+    
+    // Ensure times have seconds
+    const startTime = sched.start_time.includes(':') && sched.start_time.split(':').length === 2 ? `${sched.start_time}:00` : sched.start_time;
+    const endTime = sched.end_time.includes(':') && sched.end_time.split(':').length === 2 ? `${sched.end_time}:00` : sched.end_time;
 
-    const expectedStart = new Date(year, month - 1, day, startH, startM, startS || 0);
-    const expectedEnd = new Date(year, month - 1, day, endH, endM, endS || 0);
-    if (sched.start_time > sched.end_time) {
+    const expectedStart = new Date(`${dateStr}T${startTime}+08:00`);
+    const expectedEnd = new Date(`${dateStr}T${endTime}+08:00`);
+    if (startTime > endTime) {
       // Overnight shift
       expectedEnd.setDate(expectedEnd.getDate() + 1);
     }
@@ -372,9 +373,9 @@ router.get('/summary', auth, async (req, res) => {
     const attendanceRes = await pool.query(`
       SELECT
         COUNT(*) FILTER (
-          WHERE flag IN ('On Time','Late','Undertime','Half Day','Work From Home')
+          WHERE time_in IS NOT NULL AND day_type = 'Regular Working Day'
         ) AS days_worked,
-        COUNT(*) FILTER (WHERE flag = 'Absent')    AS days_absent,
+        COUNT(*) FILTER (WHERE attendance_status = 'Absent')    AS days_absent,
         COUNT(*) FILTER (WHERE flag = 'Holiday')   AS days_holiday,
         COALESCE(SUM(late_mins), 0) AS late_mins_total
       FROM attendance_logs
@@ -498,13 +499,13 @@ router.post('/time-in', auth, async (req, res) => {
 
     // Only calculate late minutes if it is a scheduled working day and NOT a holiday
     if (scheduleDay.is_working && !isHoliday && shiftTimes.expectedStart) {
-      const gracePeriod = scheduleDay.grace_period_mins || 15;
+      const gracePeriod = scheduleDay.grace_period_minutes || 0;
       const diffMins = Math.floor((now - shiftTimes.expectedStart) / 60000);
 
       if (diffMins > gracePeriod) {
         attendanceStatus = 'Late';
         flag = 'Late';
-        late_mins = diffMins;
+        late_mins = diffMins - gracePeriod;
       }
     }
 
@@ -573,7 +574,7 @@ router.put('/time-out/:id', auth, async (req, res) => {
       const diffMins = Math.floor((shiftTimes.expectedEnd - now) / 60000);
       if (diffMins > 0) {
         undertimeMins = diffMins;
-        if (attendanceStatus !== 'Late') {
+        if (attendanceStatus !== 'Late' && flag !== 'Late') {
           attendanceStatus = 'Undertime';
           flag = 'Undertime';
         }
@@ -639,6 +640,46 @@ router.put('/:id/adjust', auth, async (req, res) => {
       attStatus = 'Present';
     }
 
+    // --- Recalculate late_mins / undertime_mins from adjusted times ---
+    // Default to 0 so stale values are always cleared on adjustment.
+    let late_mins = 0;
+    let undertime_mins = 0;
+
+    // Fetch the current log to get employee_id
+    const logRes = await query('SELECT * FROM attendance_logs WHERE id = $1', [req.params.id]);
+    if (!logRes.rows[0]) {
+      return res.status(404).json({ message: 'Attendance log not found!' });
+    }
+    const currentLog = logRes.rows[0];
+
+    if (time_in && flag === 'Late') {
+      try {
+        const adjustedTimeIn = new Date(time_in);
+        const { scheduleDay, shiftTimes } = await getBusinessDateAndSchedule(currentLog.employee_id, adjustedTimeIn);
+        if (scheduleDay.is_working && shiftTimes.expectedStart) {
+          const gracePeriod = scheduleDay.grace_period_minutes || 0;
+          const diffMins = Math.floor((adjustedTimeIn - shiftTimes.expectedStart) / 60000);
+          if (diffMins > gracePeriod) {
+            late_mins = diffMins - gracePeriod;
+          }
+        }
+      } catch (schedErr) {
+        console.error('[adjust] Could not recalculate late_mins:', schedErr.message);
+      }
+    }
+
+    if (time_in && time_out && flag === 'Undertime') {
+      try {
+        const { scheduleDay, shiftTimes } = await getBusinessDateAndSchedule(currentLog.employee_id, new Date(time_in));
+        if (scheduleDay.is_working && shiftTimes.expectedEnd) {
+          const diffEnd = Math.floor((shiftTimes.expectedEnd - new Date(time_out)) / 60000);
+          if (diffEnd > 0) undertime_mins = diffEnd;
+        }
+      } catch (schedErr) {
+        console.error('[adjust] Could not recalculate undertime_mins:', schedErr.message);
+      }
+    }
+
     const result = await query(
       `UPDATE attendance_logs 
        SET time_in = $1,
@@ -652,10 +693,12 @@ router.put('/:id/adjust', auth, async (req, res) => {
            adjusted_by = $8,
            adjusted_at = NOW(),
            hours_worked = COALESCE($9, hours_worked),
+           late_mins = $10,
+           undertime_mins = $11,
            updated_at = NOW()
-       WHERE id = $10 
+       WHERE id = $12 
        RETURNING *`,
-      [time_in || null, time_out || null, flag || 'On Time', dayType, attStatus, remarks || '', adjustment_reason || '', adjusted_by, hoursWorked, req.params.id]
+      [time_in || null, time_out || null, flag || 'On Time', dayType, attStatus, remarks || '', adjustment_reason || '', adjusted_by, hoursWorked, late_mins, undertime_mins, req.params.id]
     );
 
     if (!result.rows[0]) {
