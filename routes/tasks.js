@@ -18,7 +18,7 @@ router.get('/', auth, async (req, res) => {
 router.get('/employee/:id', auth, async (req, res) => {
   try {
     const result = await query(
-      'SELECT * FROM tasks WHERE assignee_id = $1 ORDER BY created_at DESC',
+      `SELECT * FROM tasks WHERE assignee_id = $1::uuid OR $1::uuid = ANY(assignee_ids::uuid[]) ORDER BY created_at DESC`,
       [req.params.id]
     );
     res.json(result.rows);
@@ -29,15 +29,17 @@ router.get('/employee/:id', auth, async (req, res) => {
 
 // CREATE task
 router.post('/', auth, async (req, res) => {
-  const { title, description, assignee_id, assigned_by, priority, due_date, start_date, project, tags } = req.body;
+  const { title, description, assignee_ids, assigned_by, priority, due_date, start_date, project, tags } = req.body;
   try {
+    const safeAssigneeIds = Array.isArray(assignee_ids) && assignee_ids.length > 0 ? assignee_ids : [];
+    const primaryAssignee = safeAssigneeIds[0] || null;
     const result = await query(
       `INSERT INTO tasks 
-      (title, description, assignee_id, assigned_by, status, priority, 
+      (title, description, assignee_id, assignee_ids, assigned_by, status, priority, 
       due_date, start_date, project, tags) 
-      VALUES ($1, $2, $3, $4, 'To Do', $5, $6, $7, $8, $9) 
+      VALUES ($1, $2, $3, $4, $5, 'To Do', $6, $7, $8, $9, $10) 
       RETURNING *`,
-      [title, description, assignee_id, assigned_by, priority || 'Medium', due_date, start_date, project, tags]
+      [title, description, primaryAssignee, safeAssigneeIds, assigned_by, priority || 'Medium', due_date, start_date, project, tags]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -51,15 +53,10 @@ router.put('/:id/status', auth, async (req, res) => {
   try {
     const completed_at = status === 'Done' ? new Date() : null;
     const result = await query(
-      `UPDATE tasks 
-       SET status = $1, completed_at = $2
-       WHERE id = $3 
-       RETURNING *`,
+      `UPDATE tasks SET status = $1, completed_at = $2 WHERE id = $3 RETURNING *`,
       [status, completed_at, req.params.id]
     );
-    if (!result.rows[0]) {
-      return res.status(404).json({ message: 'Task not found!' });
-    }
+    if (!result.rows[0]) return res.status(404).json({ message: 'Task not found!' });
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -68,19 +65,20 @@ router.put('/:id/status', auth, async (req, res) => {
 
 // UPDATE task
 router.put('/:id', auth, async (req, res) => {
-  const { title, description, priority, due_date, project, tags } = req.body;
+  const { title, description, assignee_ids, priority, due_date, project, tags } = req.body;
   try {
+    const safeAssigneeIds = Array.isArray(assignee_ids) && assignee_ids.length > 0 ? assignee_ids : [];
+    const primaryAssignee = safeAssigneeIds[0] || null;
     const result = await query(
       `UPDATE tasks 
       SET title = $1, description = $2, priority = $3, 
-      due_date = $4, project = $5, tags = $6
-      WHERE id = $7 
+      due_date = $4, project = $5, tags = $6,
+      assignee_id = $7, assignee_ids = $8
+      WHERE id = $9 
       RETURNING *`,
-      [title, description, priority, due_date, project, tags, req.params.id]
+      [title, description, priority, due_date, project, tags, primaryAssignee, safeAssigneeIds, req.params.id]
     );
-    if (!result.rows[0]) {
-      return res.status(404).json({ message: 'Task not found!' });
-    }
+    if (!result.rows[0]) return res.status(404).json({ message: 'Task not found!' });
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -91,9 +89,7 @@ router.put('/:id', auth, async (req, res) => {
 router.delete('/:id', auth, async (req, res) => {
   try {
     const result = await query('DELETE FROM tasks WHERE id = $1 RETURNING id', [req.params.id]);
-    if (!result.rows[0]) {
-      return res.status(404).json({ message: 'Task not found!' });
-    }
+    if (!result.rows[0]) return res.status(404).json({ message: 'Task not found!' });
     res.json({ message: 'Task deleted!' });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -118,8 +114,7 @@ router.post('/:id/comments', auth, async (req, res) => {
   const { author_id, body } = req.body;
   try {
     const result = await query(
-      `INSERT INTO task_comments (task_id, author_id, body) 
-      VALUES ($1, $2, $3) RETURNING *`,
+      `INSERT INTO task_comments (task_id, author_id, body) VALUES ($1, $2, $3) RETURNING *`,
       [req.params.id, author_id, body]
     );
     res.json(result.rows[0]);
