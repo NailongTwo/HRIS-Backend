@@ -34,10 +34,7 @@ app.use('/api/recognitions', require('./routes/recognitions'));
 app.use('/api/surveys', require('./routes/surveys'));
 app.use('/api/performance', require('./routes/performance'));
 app.use('/api/compensation', require('./routes/compensation'));
-<<<<<<< Updated upstream
 app.use('/api/work-schedules', require('./routes/workSchedules'));
-=======
->>>>>>> Stashed changes
 // Test route
 app.get('/', (req, res) => {
   res.json({ message: 'HRIS Backend is running!' });
