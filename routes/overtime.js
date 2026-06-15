@@ -29,6 +29,30 @@ async function getUserIdByEmployee(employeeId) {
   }
 }
 
+// ─── Helper: notify all admin-side users (non-Employee roles) ─────────────────
+async function notifyAdmins({ type, title, message, entityType, entityId }) {
+  try {
+    const result = await query(
+      `SELECT u.id FROM users u
+       JOIN roles r ON u.role_id = r.id
+       WHERE r.name != 'Employee' AND r.status = 'Active'`
+    );
+    for (const row of result.rows) {
+      await notify({
+        recipientId: row.id,
+        type,
+        title,
+        message,
+        entityType,
+        entityId,
+      });
+    }
+  } catch (err) {
+    console.warn('[notifyAdmins] Failed:', err.message);
+  }
+}
+
+
 // GET all overtime requests - with employee details
 router.get('/', auth, async (req, res) => {
   try {
@@ -102,6 +126,23 @@ router.post('/', auth, async (req, res) => {
        reason, project_task || null, multiplier]
     );
     res.json(result.rows[0]);
+        // ── Fire-and-forget: notify all admin users about the new OT request ──
+    const ot = result.rows[0];
+    const empInfo = await query(
+      'SELECT first_name, last_name FROM employees WHERE id = $1',
+      [employee_id]
+    );
+    const empName = empInfo.rows[0]
+      ? `${empInfo.rows[0].first_name} ${empInfo.rows[0].last_name}`
+      : 'An employee';
+    await notifyAdmins({
+      type: 'Overtime',
+      title: 'New Overtime Request',
+      message: `${empName} submitted an overtime request (${ot.reference_no}) for ${ot.ot_date}. Reason: ${reason || 'N/A'}`,
+      entityType: 'overtime_request',
+      entityId: ot.id,
+    });
+
   } catch (err) {
     console.error('OT error:', err.message);
     res.status(500).json({ message: 'Server error', error: err.message });
