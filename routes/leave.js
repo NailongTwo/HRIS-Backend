@@ -26,6 +26,30 @@ async function getUserIdByEmployee(employeeId) {
   } catch { return null; }
 }
 
+// ─── Helper: notify all admin-side users (non-Employee roles) ─────────────────
+async function notifyAdmins({ type, title, message, entityType, entityId }) {
+  try {
+    const result = await query(
+      `SELECT u.id FROM users u
+       JOIN roles r ON u.role_id = r.id
+       WHERE r.name != 'Employee' AND r.status = 'Active'`
+    );
+    for (const row of result.rows) {
+      await notify({
+        recipientId: row.id,
+        type,
+        title,
+        message,
+        entityType,
+        entityId,
+      });
+    }
+  } catch (err) {
+    console.warn('[notifyAdmins] Failed:', err.message);
+  }
+}
+
+
 // GET all leave requests - with employee details
 router.get('/', auth, async (req, res) => {
   try {
@@ -224,6 +248,29 @@ router.post('/', auth, async (req, res) => {
        half_day_period, reason, attachment_url]
     );
     res.json(result.rows[0]);
+        // ── Fire-and-forget: notify all admin users about the new leave request ──
+    const lr = result.rows[0];
+    const empInfo = await query(
+      `SELECT e.first_name, e.last_name, lt.name as leave_type_name
+       FROM employees e, leave_types lt
+       WHERE e.id = $1 AND lt.id = $2`,
+      [employee_id, leave_type_id]
+    );
+    const empName = empInfo.rows[0]
+      ? `${empInfo.rows[0].first_name} ${empInfo.rows[0].last_name}`
+      : 'An employee';
+    const leaveName = empInfo.rows[0]?.leave_type_name || 'Leave';
+    const dateRange = start_date === end_date
+      ? new Date(start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      : `${new Date(start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${new Date(end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    await notifyAdmins({
+      type: 'Leave',
+      title: 'New Leave Request',
+      message: `${empName} submitted a ${leaveName} request (${lr.reference_no}) for ${dateRange} (${total_days} day${total_days > 1 ? 's' : ''}).`,
+      entityType: 'leave_request',
+      entityId: lr.id,
+    });
+
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
