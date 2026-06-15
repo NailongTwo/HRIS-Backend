@@ -602,82 +602,162 @@ router.put('/time-out/:id', auth, async (req, res) => {
 
 // ADJUST attendance log (manually by admin)
 router.put('/:id/adjust', auth, async (req, res) => {
-  const { time_in, time_out, flag, remarks, adjustment_reason } = req.body;
+  const { time_in, time_out, remarks, adjustment_reason } = req.body;
   const adjusted_by = req.user.id;
 
   try {
-    let hoursWorked = null;
-    if (time_in && time_out) {
-      const inDate = new Date(time_in);
-      const outDate = new Date(time_out);
-      hoursWorked = ((outDate - inDate) / 3600000).toFixed(2);
-      if (hoursWorked < 0) hoursWorked = 0;
-    }
-
-    let dayType = 'Regular Working Day';
-    let attStatus = 'Present';
-
-    if (flag === 'On Leave') {
-      dayType = 'Regular Working Day';
-      attStatus = 'On Leave';
-    } else if (flag === 'Holiday') {
-      dayType = 'Non-Working Holiday';
-      attStatus = null;
-    } else if (flag === 'Rest Day') {
-      dayType = 'Rest Day';
-      attStatus = null;
-    } else if (flag === 'Absent') {
-      dayType = 'Regular Working Day';
-      attStatus = 'Absent';
-    } else if (flag === 'Late') {
-      dayType = 'Regular Working Day';
-      attStatus = 'Late';
-    } else if (flag === 'Undertime') {
-      dayType = 'Regular Working Day';
-      attStatus = 'Undertime';
-    } else {
-      dayType = 'Regular Working Day';
-      attStatus = 'Present';
-    }
-
-    // --- Recalculate late_mins / undertime_mins from adjusted times ---
-    // Default to 0 so stale values are always cleared on adjustment.
-    let late_mins = 0;
-    let undertime_mins = 0;
-
-    // Fetch the current log to get employee_id
-    const logRes = await query('SELECT * FROM attendance_logs WHERE id = $1', [req.params.id]);
+    // Fetch the current log — cast log_date to text so pg returns 'YYYY-MM-DD'
+    // without the UTC midnight shift that turns '2026-06-15' into '2026-06-14T16:00:00Z'
+    const logRes = await query(
+      'SELECT *, log_date::text AS log_date_str FROM attendance_logs WHERE id = $1',
+      [req.params.id]
+    );
     if (!logRes.rows[0]) {
       return res.status(404).json({ message: 'Attendance log not found!' });
     }
     const currentLog = logRes.rows[0];
 
-    if (time_in && flag === 'Late') {
-      try {
-        const adjustedTimeIn = new Date(time_in);
-        const { scheduleDay, shiftTimes } = await getBusinessDateAndSchedule(currentLog.employee_id, adjustedTimeIn);
-        if (scheduleDay.is_working && shiftTimes.expectedStart) {
+    // log_date_str is already 'YYYY-MM-DD' — no timezone conversion needed
+    const logDateStr = currentLog.log_date_str.substring(0, 10);
+
+    // Check approved leave on this date
+    const leavesRes = await pool.query(
+      `SELECT lt.name as leave_type_name
+       FROM leave_requests lr
+       JOIN leave_types lt ON lr.leave_type_id = lt.id
+       WHERE lr.employee_id = $1 AND lr.status = 'Approved' 
+         AND $2::date BETWEEN lr.start_date AND lr.end_date
+       LIMIT 1`,
+      [currentLog.employee_id, logDateStr]
+    );
+    const hasApprovedLeave = leavesRes.rows.length > 0;
+    const approvedLeaveName = hasApprovedLeave ? leavesRes.rows[0].leave_type_name : null;
+
+    // Check holiday on this date
+    const isHoliday = await checkHolidayOnDate(logDateStr);
+
+    // Fetch employee schedule
+    const schedRes = await pool.query(
+      `SELECT wsd.day_of_week, wsd.is_working, wsd.start_time, wsd.end_time, ws.grace_period_minutes
+       FROM employees e
+       JOIN work_schedules ws ON e.work_schedule_id = ws.id
+       JOIN work_schedule_days wsd ON ws.id = wsd.work_schedule_id
+       WHERE e.id = $1`,
+      [currentLog.employee_id]
+    );
+
+    const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    // Use 'T00:00:00' (no timezone suffix) so the Date is created in local time,
+    // preventing a UTC-midnight shift that would land on the wrong weekday.
+    const logDayDate = new Date(logDateStr + 'T00:00:00');
+    const dayName = DAYS_OF_WEEK[logDayDate.getDay()];
+
+    let scheduleDay = schedRes.rows.find(r => r.day_of_week === dayName);
+    if (!scheduleDay) {
+      scheduleDay = {
+        day_of_week: dayName,
+        is_working: !['Saturday', 'Sunday'].includes(dayName),
+        start_time: '08:00:00',
+        end_time: '17:00:00',
+        grace_period_minutes: 0
+      };
+    }
+
+    let expectedStart = null;
+    let expectedEnd = null;
+    if (scheduleDay.is_working && scheduleDay.start_time && scheduleDay.end_time) {
+      const startTime = scheduleDay.start_time.includes(':') && scheduleDay.start_time.split(':').length === 2 ? `${scheduleDay.start_time}:00` : scheduleDay.start_time;
+      const endTime = scheduleDay.end_time.includes(':') && scheduleDay.end_time.split(':').length === 2 ? `${scheduleDay.end_time}:00` : scheduleDay.end_time;
+
+      expectedStart = new Date(`${logDateStr}T${startTime}+08:00`);
+      expectedEnd = new Date(`${logDateStr}T${endTime}+08:00`);
+      if (startTime > endTime) {
+        // Overnight shift
+        expectedEnd.setDate(expectedEnd.getDate() + 1);
+      }
+    }
+
+    const finalTimeIn = (time_in && !isNaN(new Date(time_in).getTime())) ? new Date(time_in) : null;
+    const finalTimeOut = (time_out && !isNaN(new Date(time_out).getTime())) ? new Date(time_out) : null;
+
+    let hoursWorked = null;
+    if (finalTimeIn && finalTimeOut) {
+      hoursWorked = ((finalTimeOut - finalTimeIn) / 3600000).toFixed(2);
+      if (hoursWorked < 0) hoursWorked = 0;
+    }
+
+    let dayType = 'Regular Working Day';
+    let attStatus = null;
+    let flag = 'On Time';
+    let late_mins = 0;
+    let undertime_mins = 0;
+
+    if (!finalTimeIn) {
+      // Case A: Absent / On Leave / Holiday / Rest Day
+      if (hasApprovedLeave) {
+        dayType = 'Regular Working Day';
+        attStatus = 'On Leave';
+        flag = 'On Leave';
+      } else if (isHoliday) {
+        dayType = 'Non-Working Holiday';
+        attStatus = null;
+        flag = 'Holiday';
+      } else if (!scheduleDay.is_working) {
+        dayType = 'Rest Day';
+        attStatus = null;
+        flag = 'Rest Day';
+      } else {
+        dayType = 'Regular Working Day';
+        attStatus = 'Absent';
+        flag = 'Absent';
+      }
+    } else {
+      // Case B: Present
+      if (isHoliday) {
+        dayType = 'Non-Working Holiday';
+        attStatus = 'Present';
+        flag = 'On Time';
+      } else if (!scheduleDay.is_working) {
+        dayType = 'Rest Day';
+        attStatus = 'Present';
+        flag = 'On Time';
+      } else {
+        dayType = 'Regular Working Day';
+        
+        // Calculate late minutes
+        if (expectedStart) {
           const gracePeriod = scheduleDay.grace_period_minutes || 0;
-          const diffMins = Math.floor((adjustedTimeIn - shiftTimes.expectedStart) / 60000);
+          const diffMins = Math.floor((finalTimeIn - expectedStart) / 60000);
           if (diffMins > gracePeriod) {
             late_mins = diffMins - gracePeriod;
           }
         }
-      } catch (schedErr) {
-        console.error('[adjust] Could not recalculate late_mins:', schedErr.message);
+
+        // Calculate undertime minutes
+        if (finalTimeOut && expectedEnd) {
+          const diffEnd = Math.floor((expectedEnd - finalTimeOut) / 60000);
+          if (diffEnd > 0) {
+            undertime_mins = diffEnd;
+          }
+        }
+
+        // Determine flag and status
+        if (late_mins > 0) {
+          flag = 'Late';
+          attStatus = 'Late';
+        } else if (undertime_mins > 0) {
+          flag = 'Undertime';
+          attStatus = 'Undertime';
+        } else {
+          flag = 'On Time';
+          attStatus = 'Present';
+        }
       }
     }
 
-    if (time_in && time_out && flag === 'Undertime') {
-      try {
-        const { scheduleDay, shiftTimes } = await getBusinessDateAndSchedule(currentLog.employee_id, new Date(time_in));
-        if (scheduleDay.is_working && shiftTimes.expectedEnd) {
-          const diffEnd = Math.floor((shiftTimes.expectedEnd - new Date(time_out)) / 60000);
-          if (diffEnd > 0) undertime_mins = diffEnd;
-        }
-      } catch (schedErr) {
-        console.error('[adjust] Could not recalculate undertime_mins:', schedErr.message);
-      }
+    let finalRemarks = remarks;
+    if (!finalRemarks && !finalTimeIn && hasApprovedLeave) {
+      finalRemarks = `Approved Leave: ${approvedLeaveName}`;
     }
 
     const result = await query(
@@ -692,13 +772,26 @@ router.put('/:id/adjust', auth, async (req, res) => {
            is_adjusted = true,
            adjusted_by = $8,
            adjusted_at = NOW(),
-           hours_worked = COALESCE($9, hours_worked),
+           hours_worked = $9,
            late_mins = $10,
            undertime_mins = $11,
            updated_at = NOW()
        WHERE id = $12 
        RETURNING *`,
-      [time_in || null, time_out || null, flag || 'On Time', dayType, attStatus, remarks || '', adjustment_reason || '', adjusted_by, hoursWorked, late_mins, undertime_mins, req.params.id]
+      [
+        finalTimeIn ? (time_in || null) : null,
+        finalTimeIn && finalTimeOut ? (time_out || null) : null,
+        flag,
+        dayType,
+        attStatus,
+        finalRemarks || '',
+        adjustment_reason || '',
+        adjusted_by,
+        hoursWorked,
+        late_mins,
+        undertime_mins,
+        req.params.id
+      ]
     );
 
     if (!result.rows[0]) {
