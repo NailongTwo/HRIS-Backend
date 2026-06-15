@@ -40,5 +40,10 @@ app.get('/', (req, res) => {
   res.json({ message: 'HRIS Backend is running!' });
 });
 
+// Version canary — update this timestamp to confirm Render redeploy
+app.get('/version', (req, res) => {
+  res.json({ version: '2026-06-15T12:30:00Z', feature: 'auto-flag-adjust-v2' });
+});
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
