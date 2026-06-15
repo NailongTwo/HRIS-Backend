@@ -60,4 +60,15 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
+// DELETE recognition (admin)
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM recognitions WHERE id = $1', [req.params.id]);
+    res.json({ message: 'Recognition deleted.' });
+  } catch (err) {
+    console.error('Recognition delete error:', err.message);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
 module.exports = router;
