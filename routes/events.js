@@ -7,7 +7,7 @@ const auth = require('../middleware/auth');
 router.get('/', auth, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT e.*, et.name as event_type_name, et.color, et.is_holiday
+      `SELECT e.*, et.name as event_type_name, et.color, et.is_holiday, et.is_non_working_day as event_type_is_non_working_day
        FROM events e
        JOIN event_types et ON e.event_type_id = et.id
        WHERE e.is_active = true
@@ -33,7 +33,7 @@ router.get('/types/all', auth, async (req, res) => {
 
 // POST new event type
 router.post('/types', auth, async (req, res) => {
-  const { name, description, color, is_active } = req.body;
+  const { name, description, color, is_active, is_non_working_day } = req.body;
   try {
     // Check if name already exists
     const existing = await pool.query(
@@ -45,10 +45,10 @@ router.post('/types', auth, async (req, res) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO event_types (name, description, color, is_active)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO event_types (name, description, color, is_active, is_non_working_day)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [name, description, color, is_active ?? true]
+      [name, description, color, is_active ?? true, is_non_working_day ?? false]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -60,7 +60,7 @@ router.post('/types', auth, async (req, res) => {
 router.get('/:id', auth, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT e.*, et.name as event_type_name, et.color
+      `SELECT e.*, et.name as event_type_name, et.color, et.is_non_working_day as event_type_is_non_working_day
        FROM events e
        JOIN event_types et ON e.event_type_id = et.id
        WHERE e.id = $1`,
@@ -89,7 +89,8 @@ router.post('/', auth, async (req, res) => {
     recurrence_rule,
     visibility,
     target_dept_ids,
-    created_by
+    created_by,
+    is_non_working_day
   } = req.body;
 
   try {
@@ -97,12 +98,12 @@ router.post('/', auth, async (req, res) => {
       `INSERT INTO events 
         (event_type_id, title, description, location, start_datetime, 
          end_datetime, is_all_day, is_recurring, recurrence_rule, 
-         visibility, target_dept_ids, created_by) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) 
+         visibility, target_dept_ids, created_by, is_non_working_day) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) 
        RETURNING *`,
       [event_type_id, title, description, location, start_datetime,
        end_datetime, is_all_day || false, is_recurring || false,
-       recurrence_rule, visibility || 'All', target_dept_ids, created_by]
+       recurrence_rule, visibility || 'All', target_dept_ids, created_by, is_non_working_day === undefined ? null : is_non_working_day]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -120,7 +121,8 @@ router.put('/:id', auth, async (req, res) => {
     start_datetime,
     end_datetime,
     is_all_day,
-    visibility
+    visibility,
+    is_non_working_day
   } = req.body;
 
   try {
@@ -128,11 +130,12 @@ router.put('/:id', auth, async (req, res) => {
       `UPDATE events 
        SET title = $1, description = $2, location = $3,
            start_datetime = $4, end_datetime = $5, 
-           is_all_day = $6, visibility = $7
-       WHERE id = $8 
+           is_all_day = $6, visibility = $7, is_non_working_day = $8,
+           updated_at = NOW()
+       WHERE id = $9 
        RETURNING *`,
       [title, description, location, start_datetime,
-       end_datetime, is_all_day, visibility, req.params.id]
+       end_datetime, is_all_day, visibility, is_non_working_day === undefined ? null : is_non_working_day, req.params.id]
     );
     if (!result.rows[0]) {
       return res.status(404).json({ message: 'Event not found' });
@@ -161,14 +164,14 @@ router.delete('/:id', auth, async (req, res) => {
 
 // UPDATE event type
 router.put('/types/:id', auth, async (req, res) => {
-  const { name, description, color, is_active } = req.body;
+  const { name, description, color, is_active, is_non_working_day } = req.body;
   try {
     const result = await pool.query(
       `UPDATE event_types 
-       SET name = $1, description = $2, color = $3, is_active = $4
-       WHERE id = $5 
+       SET name = $1, description = $2, color = $3, is_active = $4, is_non_working_day = $5
+       WHERE id = $6 
        RETURNING *`,
-      [name, description, color, is_active, req.params.id]
+      [name, description, color, is_active, is_non_working_day ?? false, req.params.id]
     );
     if (!result.rows[0]) {
       return res.status(404).json({ message: 'Event type not found' });

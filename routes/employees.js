@@ -65,12 +65,17 @@ router.post('/', auth, async (req, res) => {
     employment_type,
     work_setup,
     hire_date,
-    basic_salary
+    basic_salary,
+    work_schedule_id
   } = req.body;
 
   // Validate required fields to avoid database constraint violations
   if (!email || !employee_no || !first_name || !last_name || !gender || !civil_status || !date_of_birth || date_of_birth.trim() === '') {
     return res.status(400).json({ message: 'Missing required personal details: email, employee number, first name, last name, date of birth, gender, and civil status are required.' });
+  }
+
+  if (!work_schedule_id) {
+    return res.status(400).json({ message: 'Work schedule assignment is required.' });
   }
 
   const client = await pool.connect();
@@ -116,12 +121,12 @@ router.post('/', auth, async (req, res) => {
       `INSERT INTO employees 
         (user_id, employee_no, first_name, middle_name, last_name, 
          date_of_birth, gender, civil_status, nationality,
-         personal_email, personal_phone)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         personal_email, personal_phone, work_schedule_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING id`,
       [user_id, employee_no, first_name, middle_name, last_name,
        date_of_birth, gender, civil_status, nationality || 'Filipino',
-       personal_email, personal_phone]
+       personal_email, personal_phone, work_schedule_id]
     );
     const employee_id = employeeResult.rows[0].id;
 
@@ -163,7 +168,9 @@ router.put('/:id', auth, async (req, res) => {
     department_id, position_id,
     employment_type, work_setup, basic_salary,
     // Account
-    role_id
+    role_id,
+    // Work Schedule
+    work_schedule_id
   } = req.body;
 
   const safeDob = date_of_birth && String(date_of_birth).trim() !== '' ? date_of_birth : null;
@@ -176,21 +183,23 @@ router.put('/:id', auth, async (req, res) => {
     // 1. Update personal / contact info
     const empResult = await client.query(
       `UPDATE employees
-       SET first_name     = COALESCE($1, first_name),
-           middle_name    = $2,
-           last_name      = COALESCE($3, last_name),
-           date_of_birth  = COALESCE($4::date, date_of_birth),
-           gender         = COALESCE($5::gender_type, gender),
-           civil_status   = COALESCE($6::civil_status_type, civil_status),
-           nationality    = COALESCE($7, nationality),
-           personal_email = $8,
-           personal_phone = $9,
-           updated_at     = NOW()
-       WHERE id = $10
+       SET first_name       = COALESCE($1, first_name),
+           middle_name      = $2,
+           last_name        = COALESCE($3, last_name),
+           date_of_birth    = COALESCE($4::date, date_of_birth),
+           gender           = COALESCE($5::gender_type, gender),
+           civil_status     = COALESCE($6::civil_status_type, civil_status),
+           nationality      = COALESCE($7, nationality),
+           personal_email   = $8,
+           personal_phone   = $9,
+           work_schedule_id = COALESCE($10::uuid, work_schedule_id),
+           updated_at       = NOW()
+       WHERE id = $11
        RETURNING *`,
       [first_name, middle_name, last_name,
        safeDob, gender, civil_status,
        nationality, personal_email, personal_phone,
+       work_schedule_id || null,
        req.params.id]
     );
 
