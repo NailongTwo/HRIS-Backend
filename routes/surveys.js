@@ -95,4 +95,37 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
+// GET all responses for a survey (admin)
+router.get('/:id/responses', auth, async (req, res) => {
+  try {
+    const questionsRes = await pool.query(
+      'SELECT * FROM survey_questions WHERE survey_id = $1 ORDER BY order_num ASC',
+      [req.params.id]
+    );
+
+    const responsesRes = await pool.query(`
+      SELECT sr.id AS response_id, sr.employee_id, sr.submitted_at AS created_at,
+             e.first_name, e.last_name, e.employee_no
+      FROM survey_responses sr
+      LEFT JOIN employees e ON sr.employee_id = e.id
+      WHERE sr.survey_id = $1
+      ORDER BY sr.submitted_at DESC
+    `, [req.params.id]);
+
+    const responses = responsesRes.rows;
+    for (const r of responses) {
+      const ansRes = await pool.query(
+        'SELECT question_id, answer_text FROM survey_answers WHERE response_id = $1',
+        [r.response_id]
+      );
+      r.answers = ansRes.rows;
+    }
+
+    res.json({ questions: questionsRes.rows, responses });
+  } catch (err) {
+    console.error('Survey responses fetch error:', err.message);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
 module.exports = router;
