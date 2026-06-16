@@ -285,9 +285,12 @@ router.put('/:id/status', auth, async (req, res) => {
   try {
     await client.query('BEGIN');
     
-    // Get current status before update
+    // Get current leave request info
     const currentRes = await client.query(
-      `SELECT status FROM leave_requests WHERE id = $1`,
+      `SELECT lr.*, lt.name AS leave_type_name, lt.code AS leave_code
+       FROM leave_requests lr
+       JOIN leave_types lt ON lr.leave_type_id = lt.id
+       WHERE lr.id = $1`,
       [req.params.id]
     );
     
@@ -296,18 +299,46 @@ router.put('/:id/status', auth, async (req, res) => {
       return res.status(404).json({ message: 'Leave request not found!' });
     }
     
-    const oldStatus = currentRes.rows[0].status;
+    const lr = currentRes.rows[0];
+    const oldStatus = lr.status;
     
+    // ── Negative balance check (only on new approval) ──
+    if (status === 'Approved' && oldStatus !== 'Approved') {
+      const policyRes = await client.query(
+        `SELECT lp.allow_negative_balance
+         FROM leave_policies lp
+         JOIN employment_records er ON er.employee_id = $2 AND er.end_date IS NULL
+         WHERE lp.leave_type_id = $1 AND lp.employment_type = er.employment_type`,
+        [lr.leave_type_id, lr.employee_id]
+      );
+      const allowNegative = policyRes.rows[0]?.allow_negative_balance === true;
+      if (!allowNegative) {
+        const balRes = await client.query(
+          `SELECT (total_credits + carried_over - used_credits - pending_credits) AS remaining
+           FROM leave_credits
+           WHERE employee_id = $1 AND leave_type_id = $2 AND year = EXTRACT(YEAR FROM CURRENT_DATE)`,
+          [lr.employee_id, lr.leave_type_id]
+        );
+        const remaining = Number(balRes.rows[0]?.remaining || 0);
+        if (lr.total_days > remaining) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            message: `Insufficient credits. Remaining: ${remaining}, Requested: ${lr.total_days}`,
+            available: remaining,
+            requested: lr.total_days,
+          });
+        }
+      }
+    }
+    
+    // Update status
     const result = await client.query(
       `UPDATE leave_requests 
        SET status = $1, approval_remarks = $2, approved_by = $3, approved_at = NOW()
        WHERE id = $4
-       RETURNING *, 
-         (SELECT name FROM leave_types WHERE id = leave_requests.leave_type_id) AS leave_type_name`,
+       RETURNING *`,
       [status, approval_remarks, approved_by, req.params.id]
     );
-    
-    const lr = result.rows[0];
 
     // Handle attendance log records
     if (status === 'Approved' && oldStatus !== 'Approved') {
@@ -352,6 +383,24 @@ router.put('/:id/status', auth, async (req, res) => {
           [lr.employee_id, dateStr]
         );
       }
+    }
+
+    // ── Write ledger entry on approval ──
+    // The DB trigger already updated used_credits, so balanceAfter is the post-deduction balance
+    if (status === 'Approved' && oldStatus !== 'Approved') {
+      const balRes = await client.query(
+        `SELECT (total_credits + carried_over - used_credits - pending_credits) AS balance
+         FROM leave_credits
+         WHERE employee_id = $1 AND leave_type_id = $2 AND year = EXTRACT(YEAR FROM CURRENT_DATE)`,
+        [lr.employee_id, lr.leave_type_id]
+      );
+      const balanceAfter = Number(balRes.rows[0]?.balance || 0);
+      await client.query(
+        `INSERT INTO leave_ledger (employee_id, leave_type_id, transaction_type, amount, balance_after, remarks, performed_by, reference_id)
+         VALUES ($1, $2, 'Usage', $3, $4, $5, $6, $7)`,
+        [lr.employee_id, lr.leave_type_id, -(lr.total_days), balanceAfter,
+         `Approved: ${lr.reference_no}`, approved_by, lr.id]
+      );
     }
 
     await client.query('COMMIT');

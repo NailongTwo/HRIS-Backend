@@ -16,6 +16,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/employees', require('./routes/employees'));
 app.use('/api/attendance', require('./routes/attendance'));
 app.use('/api/leave', require('./routes/leave'));
+app.use('/api/leave-ledger', require('./routes/leaveLedger'));
 app.use('/api/overtime', require('./routes/overtime'));
 app.use('/api/tasks', require('./routes/tasks'));
 app.use('/api/notifications', require('./routes/notifications'));
