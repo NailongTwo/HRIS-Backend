@@ -52,9 +52,12 @@ router.get('/', auth, async (req, res) => {
 router.get('/employee/:id', auth, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT p.*, pp.period_label, pp.start_date, pp.end_date, pp.payment_date
+      `SELECT p.*, pp.period_label, pp.start_date, pp.end_date, pp.payment_date,
+              e.employee_no,
+              CONCAT(e.first_name, ' ', e.last_name) AS employee_name
       FROM payslips p
       JOIN pay_periods pp ON p.pay_period_id = pp.id
+      JOIN employees   e  ON p.employee_id   = e.id
       WHERE p.employee_id = $1 AND p.is_released = true
       ORDER BY pp.start_date DESC`,
       [req.params.id]
