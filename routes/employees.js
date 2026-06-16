@@ -250,6 +250,7 @@ router.put('/:id', auth, async (req, res) => {
     res.json({ message: 'Employee updated successfully!', employee });
   } catch (err) {
     await client.query('ROLLBACK');
+    console.error('[PUT /employees] Error:', err.message);
     res.status(500).json({ message: 'Server error', error: err.message });
   } finally {
     client.release();
