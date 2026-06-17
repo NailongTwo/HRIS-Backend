@@ -1,5 +1,10 @@
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
 require('dotenv').config();
+
+// Prevent pg from converting DATE columns into JS Date objects (which get
+// shifted by the server's local timezone on JSON serialization). Keep dates
+// as plain "YYYY-MM-DD" strings instead.
+types.setTypeParser(1082, (val) => val);
 
 const poolConfig = process.env.DATABASE_URL
   ? { connectionString: process.env.DATABASE_URL }
