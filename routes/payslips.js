@@ -227,9 +227,15 @@ router.post('/', auth, authorize('payslips', 'create'), async (req, res) => {
   } = req.body;
 
   try {
-    // Generate reference number PS-YYYY-MM-NNNN using a counter
-    const count = await pool.query('SELECT COUNT(*) FROM payslips');
-    const refNo = `PS-${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(parseInt(count.rows[0].count) + 1).padStart(4, '0')}`;
+    // Use MAX instead of COUNT to always get the next highest number
+    const countRes = await pool.query(
+      `SELECT COALESCE(MAX(CAST(SPLIT_PART(reference_no, '-', 4) AS INTEGER)), 0) AS max_seq 
+       FROM payslips 
+       WHERE reference_no LIKE $1`,
+      [`PS-${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-%`]
+    );
+    const nextSeq = (countRes.rows[0].max_seq || 0) + 1;
+    const refNo = `PS-${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(nextSeq).padStart(4, '0')}`;
 
     const result = await pool.query(
       `INSERT INTO payslips 
