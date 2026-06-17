@@ -3,10 +3,31 @@ const router = express.Router();
 const pool = require('../config/db');
 const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
+const authorize = require('../middleware/authorize');
 const bcrypt = require('bcryptjs');
 
+// GET employees as lightweight list — for dropdowns/pickers/charts, any authenticated user
+router.get('/simple', auth, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT e.id, e.id AS employee_id, e.user_id, e.employee_no, e.first_name, e.last_name, e.status,
+             d.name AS department_name, er.department_id, p.title AS position_title, er.position_id,
+             er.hire_date, er.employment_type
+      FROM employees e
+      LEFT JOIN employment_records er ON er.employee_id = e.id 
+        AND (er.end_date IS NULL OR er.end_date > NOW())
+      LEFT JOIN departments d ON er.department_id = d.id
+      LEFT JOIN positions p ON er.position_id = p.id
+      ORDER BY e.last_name ASC, e.first_name ASC
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
 // GET all employees - using the view joined with users and roles
-router.get('/', auth, async (req, res) => {
+router.get('/', auth, authorize('employees', 'view'), async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT v.*, u.role_id, COALESCE(r.name, u.role::text) as role
@@ -22,7 +43,7 @@ router.get('/', auth, async (req, res) => {
 });
 
 // GET single employee
-router.get('/:id', auth, async (req, res) => {
+router.get('/:id', auth, authorize('employees', 'view'), async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT v.*, u.role_id, COALESCE(r.name, u.role::text) as role
@@ -42,7 +63,7 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 // CREATE employee - full transaction (user + employee + employment record)
-router.post('/', auth, async (req, res) => {
+router.post('/', auth, authorize('employees', 'create'), async (req, res) => {
   const {
     // User account info
     email,
@@ -158,7 +179,7 @@ router.post('/', auth, async (req, res) => {
 });
 
 // UPDATE employee — full transaction: personal info + employment record + user role
-router.put('/:id', auth, async (req, res) => {
+router.put('/:id', auth, authorize('employees', 'edit'), async (req, res) => {
   const {
     // Personal / contact
     first_name, middle_name, last_name,
@@ -259,7 +280,7 @@ router.put('/:id', auth, async (req, res) => {
 
 
 // SOFT DELETE - set status to Inactive
-router.delete('/:id', auth, async (req, res) => {
+router.delete('/:id', auth, authorize('employees', 'delete'), async (req, res) => {
   try {
     const result = await query(
       `UPDATE employees SET status='Inactive' WHERE id=$1 RETURNING *`,

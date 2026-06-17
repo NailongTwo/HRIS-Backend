@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
+const authorize = require('../middleware/authorize');
 
 // ── Notify all active employees about a new announcement ──────────────────────
 async function notifyAllEmployees({ title, annId, category }) {
@@ -30,7 +31,7 @@ async function notifyAllEmployees({ title, annId, category }) {
 }
 
 // GET all announcements
-router.get('/', auth, async (req, res) => {
+router.get('/', auth, authorize('announcements', 'view'), async (req, res) => {
   try {
     const result = await query(
       `SELECT id, title, category, audience, body, posted_by AS "postedBy", 
@@ -45,7 +46,7 @@ router.get('/', auth, async (req, res) => {
 });
 
 // CREATE announcement — notifies all active employees
-router.post('/', auth, async (req, res) => {
+router.post('/', auth, authorize('announcements', 'create'), async (req, res) => {
   const { title, category, audience, body } = req.body;
   const postedBy = req.body.postedBy || 'Admin';
   
@@ -68,7 +69,7 @@ router.post('/', auth, async (req, res) => {
 });
 
 // UPDATE announcement
-router.put('/:id', auth, async (req, res) => {
+router.put('/:id', auth, authorize('announcements', 'edit'), async (req, res) => {
   const { id } = req.params;
   const { title, category, audience, body } = req.body;
   
@@ -93,7 +94,7 @@ router.put('/:id', auth, async (req, res) => {
 });
 
 // DELETE announcement
-router.delete('/:id', auth, async (req, res) => {
+router.delete('/:id', auth, authorize('announcements', 'delete'), async (req, res) => {
   const { id } = req.params;
   try {
     const result = await query(

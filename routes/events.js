@@ -2,9 +2,10 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
+const authorize = require('../middleware/authorize');
 
 // GET all events
-router.get('/', auth, async (req, res) => {
+router.get('/', auth, authorize('events', 'view'), async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT e.*, et.name as event_type_name, et.color, et.is_holiday, et.is_non_working_day as event_type_is_non_working_day
@@ -20,7 +21,7 @@ router.get('/', auth, async (req, res) => {
 });
 
 // GET all event types -- MOVED TO TOP before /:id
-router.get('/types/all', auth, async (req, res) => {
+router.get('/types/all', auth, authorize('events', 'view'), async (req, res) => {
   try {
     const result = await pool.query(
       'SELECT * FROM event_types WHERE is_active = true ORDER BY name ASC'
@@ -32,7 +33,7 @@ router.get('/types/all', auth, async (req, res) => {
 });
 
 // POST new event type
-router.post('/types', auth, async (req, res) => {
+router.post('/types', auth, authorize('events', 'create'), async (req, res) => {
   const { name, description, color, is_active, is_non_working_day } = req.body;
   try {
     // Check if name already exists
@@ -76,7 +77,7 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 // CREATE event
-router.post('/', auth, async (req, res) => {
+router.post('/', auth, authorize('events', 'create'), async (req, res) => {
   const {
     event_type_id,
     title,
@@ -113,7 +114,7 @@ router.post('/', auth, async (req, res) => {
 });
 
 // UPDATE event
-router.put('/:id', auth, async (req, res) => {
+router.put('/:id', auth, authorize('events', 'edit'), async (req, res) => {
   const {
     title,
     description,
@@ -147,7 +148,7 @@ router.put('/:id', auth, async (req, res) => {
 });
 
 // DELETE event (soft delete)
-router.delete('/:id', auth, async (req, res) => {
+router.delete('/:id', auth, authorize('events', 'delete'), async (req, res) => {
   try {
     const result = await pool.query(
       'UPDATE events SET is_active = false WHERE id = $1 RETURNING *',
@@ -163,7 +164,7 @@ router.delete('/:id', auth, async (req, res) => {
 });
 
 // UPDATE event type
-router.put('/types/:id', auth, async (req, res) => {
+router.put('/types/:id', auth, authorize('events', 'edit'), async (req, res) => {
   const { name, description, color, is_active, is_non_working_day } = req.body;
   try {
     const result = await pool.query(
@@ -182,7 +183,7 @@ router.put('/types/:id', auth, async (req, res) => {
   }
 });
 // DELETE event type (soft delete)
-router.delete('/types/:id', auth, async (req, res) => {
+router.delete('/types/:id', auth, authorize('events', 'delete'), async (req, res) => {
   try {
     const result = await pool.query(
       'UPDATE event_types SET is_active = false WHERE id = $1 RETURNING *',

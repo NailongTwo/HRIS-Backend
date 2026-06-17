@@ -2,9 +2,10 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
+const authorize = require('../middleware/authorize');
 
 // GET audit logs
-router.get('/', auth, async (req, res) => {
+router.get('/', auth, authorize('audit_logs', 'view'), async (req, res) => {
   try {
     const { action, table } = req.query;
     
@@ -59,7 +60,7 @@ router.get('/', auth, async (req, res) => {
 });
 
 // Helper to create an audit log from other routes
-router.post('/', auth, async (req, res) => {
+router.post('/', auth, authorize('audit_logs', 'create'), async (req, res) => {
   const { action, table_name, record_id, remarks, ip_address } = req.body;
   const userId = req.user.id;
   

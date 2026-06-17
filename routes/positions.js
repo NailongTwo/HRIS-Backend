@@ -2,9 +2,26 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
+const authorize = require('../middleware/authorize');
+
+// GET positions as lightweight list — for dropdowns/filters, any authenticated user
+router.get('/simple', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT p.id, p.title, p.department_id, d.name AS department_name
+       FROM positions p
+       LEFT JOIN departments d ON p.department_id = d.id
+       WHERE p.is_active = true
+       ORDER BY p.title ASC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
 
 // GET all positions
-router.get('/', auth, async (req, res) => {
+router.get('/', auth, authorize('job_positions', 'view'), async (req, res) => {
   try {
     const { activeOnly } = req.query;
     let queryStr = `
@@ -30,7 +47,7 @@ router.get('/', auth, async (req, res) => {
 });
 
 // GET positions by department
-router.get('/department/:id', auth, async (req, res) => {
+router.get('/department/:id', auth, authorize('job_positions', 'view'), async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT * FROM positions 
@@ -44,7 +61,7 @@ router.get('/department/:id', auth, async (req, res) => {
 });
 
 // GET single position
-router.get('/:id', auth, async (req, res) => {
+router.get('/:id', auth, authorize('job_positions', 'view'), async (req, res) => {
   try {
     const result = await pool.query(
       'SELECT * FROM positions WHERE id = $1',
@@ -57,7 +74,7 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 // CREATE position
-router.post('/', auth, async (req, res) => {
+router.post('/', auth, authorize('job_positions', 'create'), async (req, res) => {
   const { code, title, department_id, level, description, status, is_active } = req.body;
   const activeVal = is_active !== undefined ? is_active : (status === 'Inactive' ? false : true);
   try {
@@ -84,7 +101,7 @@ router.post('/', auth, async (req, res) => {
 });
 
 // UPDATE position
-router.put('/:id', auth, async (req, res) => {
+router.put('/:id', auth, authorize('job_positions', 'edit'), async (req, res) => {
   const { id } = req.params;
   const { code, title, department_id, level, description, is_active: is_active_req, status } = req.body;
   const is_active = is_active_req !== undefined ? is_active_req : (status !== undefined ? status === 'Active' : undefined);
@@ -138,7 +155,7 @@ router.put('/:id', auth, async (req, res) => {
 });
 
 // DELETE position (soft delete)
-router.delete('/:id', auth, async (req, res) => {
+router.delete('/:id', auth, authorize('job_positions', 'delete'), async (req, res) => {
   try {
     const { id } = req.params;
 

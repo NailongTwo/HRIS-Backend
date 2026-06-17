@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('../config/db');
 const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
+const authorize = require('../middleware/authorize');
 
 // ─── Helper: fire-and-forget notification insert ──────────────────────────────
 // Silently fails so a notification error never breaks the main response.
@@ -54,7 +55,7 @@ async function notifyAdmins({ type, title, message, entityType, entityId }) {
 
 
 // GET all overtime requests - with employee details
-router.get('/', auth, async (req, res) => {
+router.get('/', auth, authorize('overtime_requests', 'view'), async (req, res) => {
   try {
     const result = await query(
       `SELECT ot.*,
@@ -70,7 +71,7 @@ router.get('/', auth, async (req, res) => {
 });
 
 // GET overtime requests by employee
-router.get('/employee/:id', auth, async (req, res) => {
+router.get('/employee/:id', auth, authorize('overtime_requests', 'view'), async (req, res) => {
   try {
     const result = await query(
       `SELECT ot.*, 
@@ -150,7 +151,7 @@ router.post('/', auth, async (req, res) => {
 });
 
 // APPROVE/REJECT overtime request — auto-notifies employee
-router.put('/:id/status', auth, async (req, res) => {
+router.put('/:id/status', auth, authorize('overtime_requests', 'edit'), async (req, res) => {
   const { status, approval_remarks } = req.body;
   const approved_by = req.user.id;
 

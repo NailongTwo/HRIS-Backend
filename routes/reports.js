@@ -2,9 +2,10 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
+const authorize = require('../middleware/authorize');
 
 // GET attendance report
-router.get('/attendance', auth, async (req, res) => {
+router.get('/attendance', auth, authorize('reports', 'view'), async (req, res) => {
   const { start_date, end_date, employee_id } = req.query;
   try {
     let query = `
@@ -32,7 +33,7 @@ router.get('/attendance', auth, async (req, res) => {
 });
 
 // GET leave report
-router.get('/leave', auth, async (req, res) => {
+router.get('/leave', auth, authorize('reports', 'view'), async (req, res) => {
   const { start_date, end_date, employee_id, status } = req.query;
   try {
     let query = `
@@ -65,7 +66,7 @@ router.get('/leave', auth, async (req, res) => {
 });
 
 // GET overtime report
-router.get('/overtime', auth, async (req, res) => {
+router.get('/overtime', auth, authorize('reports', 'view'), async (req, res) => {
   const { start_date, end_date, employee_id, status } = req.query;
   try {
     let query = `
@@ -96,7 +97,7 @@ router.get('/overtime', auth, async (req, res) => {
 });
 
 // GET payroll report
-router.get('/payroll', auth, async (req, res) => {
+router.get('/payroll', auth, authorize('reports', 'view'), async (req, res) => {
   const { pay_period_id } = req.query;
   try {
     const result = await pool.query(
@@ -116,7 +117,7 @@ router.get('/payroll', auth, async (req, res) => {
 });
 
 // GET employee master list report
-router.get('/employees', auth, async (req, res) => {
+router.get('/employees', auth, authorize('reports', 'view'), async (req, res) => {
   const { department_id, status } = req.query;
   try {
     let query = `

@@ -4,6 +4,16 @@ const pool = require('../config/db');
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
 
+// 0. GET roles as lightweight list (id + name only) — for dropdowns, any authenticated user
+router.get('/simple', auth, async (req, res) => {
+  try {
+    const result = await pool.query(`SELECT id, name FROM roles WHERE status = 'Active' ORDER BY name ASC`);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
 // 1. GET all roles (with user count)
 // Gated: only users with view rights on 'role_permission' can view roles
 router.get('/', auth, authorize('role_permission', 'view'), async (req, res) => {

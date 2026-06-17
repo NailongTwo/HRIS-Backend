@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
+const authorize = require('../middleware/authorize');
 
 // ─── GOALS ───────────────────────────────────────────────
 
@@ -19,7 +20,7 @@ router.get('/goals/employee/:id', auth, async (req, res) => {
 });
 
 // GET all goals (admin)
-router.get('/goals', auth, async (req, res) => {
+router.get('/goals', auth, authorize('performance', 'view'), async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT g.*, e.first_name, e.last_name, e.employee_no
@@ -34,7 +35,7 @@ router.get('/goals', auth, async (req, res) => {
 });
 
 // POST create goal
-router.post('/goals', auth, async (req, res) => {
+router.post('/goals', auth, authorize('performance', 'create'), async (req, res) => {
   const { employee_id, title, description, target_date } = req.body;
   try {
     const result = await pool.query(
@@ -81,7 +82,7 @@ router.get('/kpi/employee/:id', auth, async (req, res) => {
 });
 
 // GET all KPIs (admin)
-router.get('/kpi', auth, async (req, res) => {
+router.get('/kpi', auth, authorize('performance', 'view'), async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT k.*, e.first_name, e.last_name, e.employee_no, g.title as goal_title
@@ -97,7 +98,7 @@ router.get('/kpi', auth, async (req, res) => {
 });
 
 // POST create KPI
-router.post('/kpi', auth, async (req, res) => {
+router.post('/kpi', auth, authorize('performance', 'create'), async (req, res) => {
   const { employee_id, goal_id, kpi_name, target_value, unit, period } = req.body;
   try {
     const result = await pool.query(
@@ -144,7 +145,7 @@ router.get('/evaluations/employee/:id', auth, async (req, res) => {
 });
 
 // GET all evaluations (admin)
-router.get('/evaluations', auth, async (req, res) => {
+router.get('/evaluations', auth, authorize('performance', 'view'), async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT pe.*,
@@ -162,7 +163,7 @@ router.get('/evaluations', auth, async (req, res) => {
 });
 
 // POST create evaluation with appraisal categories
-router.post('/evaluations', auth, async (req, res) => {
+router.post('/evaluations', auth, authorize('performance', 'create'), async (req, res) => {
   const { employee_id, evaluator_id, period, evaluation_date, overall_rating, strengths, improvements, comments, appraisals } = req.body;
   try {
     const evalResult = await pool.query(

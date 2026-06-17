@@ -3,9 +3,10 @@ const router = express.Router();
 const pool = require('../config/db');
 const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
+const authorize = require('../middleware/authorize');
 
 // GET all tasks
-router.get('/', auth, async (req, res) => {
+router.get('/', auth, authorize('tasks', 'view'), async (req, res) => {
   try {
     const result = await query('SELECT * FROM tasks ORDER BY created_at DESC');
     res.json(result.rows);
@@ -28,7 +29,7 @@ router.get('/employee/:id', auth, async (req, res) => {
 });
 
 // CREATE task
-router.post('/', auth, async (req, res) => {
+router.post('/', auth, authorize('tasks', 'create'), async (req, res) => {
   const { title, description, assignee_ids, assigned_by, priority, due_date, start_date, project, tags } = req.body;
   try {
     const safeAssigneeIds = Array.isArray(assignee_ids) && assignee_ids.length > 0 ? assignee_ids : [];
@@ -64,7 +65,7 @@ router.put('/:id/status', auth, async (req, res) => {
 });
 
 // UPDATE task
-router.put('/:id', auth, async (req, res) => {
+router.put('/:id', auth, authorize('tasks', 'edit'), async (req, res) => {
   const { title, description, assignee_ids, priority, due_date, project, tags } = req.body;
   try {
     const safeAssigneeIds = Array.isArray(assignee_ids) && assignee_ids.length > 0 ? assignee_ids : [];
@@ -86,7 +87,7 @@ router.put('/:id', auth, async (req, res) => {
 });
 
 // DELETE task
-router.delete('/:id', auth, async (req, res) => {
+router.delete('/:id', auth, authorize('tasks', 'delete'), async (req, res) => {
   try {
     const result = await query('DELETE FROM tasks WHERE id = $1 RETURNING id', [req.params.id]);
     if (!result.rows[0]) return res.status(404).json({ message: 'Task not found!' });

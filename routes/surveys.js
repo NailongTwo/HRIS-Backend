@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
+const authorize = require('../middleware/authorize');
 
 // GET all active surveys with questions, and whether employee has responded
 router.get('/employee/:id', auth, async (req, res) => {
@@ -59,7 +60,7 @@ router.post('/:id/respond', auth, async (req, res) => {
 });
 
 // GET all surveys (admin)
-router.get('/', auth, async (req, res) => {
+router.get('/', auth, authorize('surveys', 'view'), async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM surveys ORDER BY created_at DESC');
     res.json(result.rows);
@@ -69,7 +70,7 @@ router.get('/', auth, async (req, res) => {
 });
 
 // POST create survey (admin)
-router.post('/', auth, async (req, res) => {
+router.post('/', auth, authorize('surveys', 'create'), async (req, res) => {
   const { title, description, created_by, expires_at, questions } = req.body;
   try {
     const surveyRes = await pool.query(
@@ -96,7 +97,7 @@ router.post('/', auth, async (req, res) => {
 });
 
 // GET all responses for a survey (admin)
-router.get('/:id/responses', auth, async (req, res) => {
+router.get('/:id/responses', auth, authorize('surveys', 'view'), async (req, res) => {
   try {
     const questionsRes = await pool.query(
       'SELECT * FROM survey_questions WHERE survey_id = $1 ORDER BY order_num ASC',

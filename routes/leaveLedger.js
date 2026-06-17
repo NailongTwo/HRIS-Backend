@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('../config/db');
 const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
+const authorize = require('../middleware/authorize');
 
 async function getCurrentBalance(client, employeeId, leaveTypeId, year) {
   const res = await client.query(
@@ -34,7 +35,7 @@ async function notify({ recipientId, type, title, message, entityType, entityId 
   }
 }
 
-router.get('/employee/:id', auth, async (req, res) => {
+router.get('/employee/:id', auth, authorize('leave_ledger', 'view'), async (req, res) => {
   try {
     const result = await query(
       `SELECT ll.transaction_date, ll.transaction_type, ll.amount, ll.balance_after,
@@ -53,7 +54,7 @@ router.get('/employee/:id', auth, async (req, res) => {
   }
 });
 
-router.get('/balance/:id', auth, async (req, res) => {
+router.get('/balance/:id', auth, authorize('leave_ledger', 'view'), async (req, res) => {
   try {
     const result = await query(
       `SELECT DISTINCT ON (ll.leave_type_id)
@@ -74,7 +75,7 @@ router.get('/balance/:id', auth, async (req, res) => {
   }
 });
 
-router.post('/allocate', auth, async (req, res) => {
+router.post('/allocate', auth, authorize('leave_ledger', 'edit'), async (req, res) => {
   const { employee_id, leave_type_id, credits, year, reason } = req.body;
   const performedBy = req.user.id;
   const yr = year || new Date().getFullYear();
@@ -117,7 +118,7 @@ router.post('/allocate', auth, async (req, res) => {
   } finally { client.release(); }
 });
 
-router.post('/allocate/bulk', auth, async (req, res) => {
+router.post('/allocate/bulk', auth, authorize('leave_ledger', 'edit'), async (req, res) => {
   const { target, department_id, leave_type_id, credits, year, employment_types, preview } = req.body;
   const performedBy = req.user.id;
   const yr = year || new Date().getFullYear();
@@ -175,7 +176,7 @@ router.post('/allocate/bulk', auth, async (req, res) => {
   }
 });
 
-router.post('/adjust', auth, async (req, res) => {
+router.post('/adjust', auth, authorize('leave_ledger', 'edit'), async (req, res) => {
   const { employee_id, leave_type_id, amount, year, remarks } = req.body;
   const performedBy = req.user.id;
   const yr = year || new Date().getFullYear();
@@ -214,7 +215,7 @@ router.post('/adjust', auth, async (req, res) => {
   } finally { client.release(); }
 });
 
-router.post('/reset', auth, async (req, res) => {
+router.post('/reset', auth, authorize('leave_ledger', 'edit'), async (req, res) => {
   const { employee_id, leave_type_id, year, remarks } = req.body;
   const performedBy = req.user.id;
   const yr = year || new Date().getFullYear();
@@ -245,7 +246,7 @@ router.post('/reset', auth, async (req, res) => {
   } finally { client.release(); }
 });
 
-router.post('/carry-over', auth, async (req, res) => {
+router.post('/carry-over', auth, authorize('leave_ledger', 'edit'), async (req, res) => {
   const { fromYear } = req.body;
   const performedBy = req.user.id;
   const fromYr = fromYear || new Date().getFullYear() - 1;

@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
+const authorize = require('../middleware/authorize');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 
@@ -23,7 +24,7 @@ const upload = multer({
 
 
 // GET all payslips (admin view) — optionally filter by pay_period_id
-router.get('/', auth, async (req, res) => {
+router.get('/', auth, authorize('payslips', 'view'), async (req, res) => {
   try {
     const { pay_period_id } = req.query;
     let query = `
@@ -69,7 +70,7 @@ router.get('/employee/:id', auth, async (req, res) => {
 });
 
 // GET all pay periods
-router.get('/pay-periods/all', auth, async (req, res) => {
+router.get('/pay-periods/all', auth, authorize('payroll_periods', 'view'), async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT * FROM pay_periods ORDER BY start_date DESC`
@@ -81,7 +82,7 @@ router.get('/pay-periods/all', auth, async (req, res) => {
 });
 
 // CREATE pay period
-router.post('/pay-periods', auth, async (req, res) => {
+router.post('/pay-periods', auth, authorize('payroll_periods', 'create'), async (req, res) => {
   const { period_label, start_date, end_date, payment_date } = req.body;
   try {
     // Automatically derive fields if not provided
@@ -104,7 +105,7 @@ router.post('/pay-periods', auth, async (req, res) => {
 });
 
 // FINALIZE/RELEASE pay period
-router.put('/pay-periods/:id/finalize', auth, async (req, res) => {
+router.put('/pay-periods/:id/finalize', auth, authorize('payroll_periods', 'edit'), async (req, res) => {
   try {
     const result = await pool.query(
       `UPDATE pay_periods 
@@ -198,7 +199,7 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 // CREATE payslip
-router.post('/', auth, async (req, res) => {
+router.post('/', auth, authorize('payslips', 'create'), async (req, res) => {
   const {
     employee_id,
     pay_period_id,
@@ -252,7 +253,7 @@ router.post('/', auth, async (req, res) => {
   }
 });
 // UPLOAD payslip PDF to Supabase and mark as released
-router.post('/:id/upload', auth, upload.single('file'), async (req, res) => {
+router.post('/:id/upload', auth, authorize('payslips', 'edit'), upload.single('file'), async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -306,7 +307,7 @@ router.post('/:id/upload', auth, upload.single('file'), async (req, res) => {
 });
 
 // RELEASE payslip to employee
-router.put('/:id/release', auth, async (req, res) => {
+router.put('/:id/release', auth, authorize('payslips', 'edit'), async (req, res) => {
   try {
     const result = await pool.query(
       `UPDATE payslips 

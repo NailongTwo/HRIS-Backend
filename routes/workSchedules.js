@@ -2,9 +2,10 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
+const authorize = require('../middleware/authorize');
 
 // GET all work schedules (with employee count and days array)
-router.get('/', auth, async (req, res) => {
+router.get('/', auth, authorize('work_schedules', 'view'), async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT ws.*, 
@@ -93,7 +94,7 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 // CREATE work schedule
-router.post('/', auth, async (req, res) => {
+router.post('/', auth, authorize('work_schedules', 'create'), async (req, res) => {
   const { name, description, status, grace_period_minutes, days } = req.body;
 
   if (!name || !name.trim()) {
@@ -186,7 +187,7 @@ router.post('/', auth, async (req, res) => {
 });
 
 // UPDATE work schedule
-router.put('/:id', auth, async (req, res) => {
+router.put('/:id', auth, authorize('work_schedules', 'edit'), async (req, res) => {
   const { id } = req.params;
   const { name, description, status, grace_period_minutes, days } = req.body;
 
@@ -286,7 +287,7 @@ router.put('/:id', auth, async (req, res) => {
 });
 
 // DELETE work schedule (only blocks if ACTIVE employees are currently assigned)
-router.delete('/:id', auth, async (req, res) => {
+router.delete('/:id', auth, authorize('work_schedules', 'delete'), async (req, res) => {
   try {
     const { id } = req.params;
 

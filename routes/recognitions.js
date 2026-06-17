@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
+const authorize = require('../middleware/authorize');
 
 // GET all recognitions for an employee
 router.get('/employee/:id', auth, async (req, res) => {
@@ -23,7 +24,7 @@ router.get('/employee/:id', auth, async (req, res) => {
 });
 
 // GET all recognitions (company-wide feed)
-router.get('/', auth, async (req, res) => {
+router.get('/', auth, authorize('recognition', 'view'), async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT r.*, 
@@ -44,7 +45,7 @@ router.get('/', auth, async (req, res) => {
 });
 
 // POST new recognition (admin/HR)
-router.post('/', auth, async (req, res) => {
+router.post('/', auth, authorize('recognition', 'create'), async (req, res) => {
   const { employee_id, title, description, category, awarded_by, awarded_date } = req.body;
   try {
     const result = await pool.query(
@@ -61,7 +62,7 @@ router.post('/', auth, async (req, res) => {
 });
 
 // DELETE recognition (admin)
-router.delete('/:id', auth, async (req, res) => {
+router.delete('/:id', auth, authorize('recognition', 'delete'), async (req, res) => {
   try {
     await pool.query('DELETE FROM recognitions WHERE id = $1', [req.params.id]);
     res.json({ message: 'Recognition deleted.' });

@@ -2,9 +2,22 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
+const authorize = require('../middleware/authorize');
+
+// GET departments as lightweight list — for dropdowns/filters, any authenticated user
+router.get('/simple', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, name FROM departments WHERE is_active = true ORDER BY name ASC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
 
 // GET all departments
-router.get('/', auth, async (req, res) => {
+router.get('/', auth, authorize('departments', 'view'), async (req, res) => {
   try {
     const { activeOnly } = req.query;
     let queryStr = `
@@ -28,7 +41,7 @@ router.get('/', auth, async (req, res) => {
 });
 
 // GET single department
-router.get('/:id', auth, async (req, res) => {
+router.get('/:id', auth, authorize('departments', 'view'), async (req, res) => {
   try {
     const result = await pool.query(
       'SELECT * FROM departments WHERE id = $1',
@@ -41,7 +54,7 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 // CREATE department
-router.post('/', auth, async (req, res) => {
+router.post('/', auth, authorize('departments', 'create'), async (req, res) => {
   const { code, name, description, head_employee_id, parent_dept_id, status, is_active } = req.body;
   const activeVal = is_active !== undefined ? is_active : (status === 'Inactive' ? false : true);
   try {
@@ -62,7 +75,7 @@ router.post('/', auth, async (req, res) => {
 });
 
 // UPDATE department
-router.put('/:id', auth, async (req, res) => {
+router.put('/:id', auth, authorize('departments', 'edit'), async (req, res) => {
   const { id } = req.params;
   const { code, name, description, head_employee_id, parent_dept_id, is_active: is_active_req, status } = req.body;
   const is_active = is_active_req !== undefined ? is_active_req : (status !== undefined ? status === 'Active' : undefined);
@@ -124,7 +137,7 @@ router.put('/:id', auth, async (req, res) => {
 });
 
 // DELETE department (soft delete)
-router.delete('/:id', auth, async (req, res) => {
+router.delete('/:id', auth, authorize('departments', 'delete'), async (req, res) => {
   try {
     const { id } = req.params;
 

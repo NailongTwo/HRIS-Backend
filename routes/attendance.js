@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('../config/db');
 const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
+const authorize = require('../middleware/authorize');
 
 // Helper to check if a holiday exists on a date
 async function checkHolidayOnDate(dateStr) {
@@ -322,7 +323,7 @@ async function syncEmployeeAttendance(employeeId) {
 }
 
 // GET all attendance logs
-router.get('/', auth, async (req, res) => {
+router.get('/', auth, authorize('attendance', 'view'), async (req, res) => {
   try {
     // Sync active employees
     const activeEmps = await query("SELECT id FROM employees WHERE status = 'Active'");
@@ -344,7 +345,7 @@ router.get('/', auth, async (req, res) => {
 });
 
 // GET attendance by employee
-router.get('/employee/:id', auth, async (req, res) => {
+router.get('/employee/:id', auth, authorize('attendance', 'view'), async (req, res) => {
   try {
     await syncEmployeeAttendance(req.params.id);
 
@@ -359,7 +360,7 @@ router.get('/employee/:id', auth, async (req, res) => {
 });
 
 // GET attendance summary for payslip generation
-router.get('/summary', auth, async (req, res) => {
+router.get('/summary', auth, authorize('attendance', 'view'), async (req, res) => {
   try {
     const { employee_id, start_date, end_date } = req.query;
  
@@ -451,7 +452,7 @@ router.get('/summary', auth, async (req, res) => {
 });
 
 // GET monthly summary
-router.get('/summary/:employee_id', auth, async (req, res) => {
+router.get('/summary/:employee_id', auth, authorize('attendance', 'view'), async (req, res) => {
   try {
     await syncEmployeeAttendance(req.params.employee_id);
 
@@ -601,7 +602,7 @@ router.put('/time-out/:id', auth, async (req, res) => {
 });
 
 // ADJUST attendance log (manually by admin)
-router.put('/:id/adjust', auth, async (req, res) => {
+router.put('/:id/adjust', auth, authorize('attendance', 'edit'), async (req, res) => {
   const { time_in, time_out, remarks, adjustment_reason } = req.body;
   const adjusted_by = req.user.id;
 

@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('../config/db');
 const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
+const authorize = require('../middleware/authorize');
 
 // ── Helper: silent fire-and-forget notification insert ────────────────────────
 async function notify({ recipientId, type, title, message, entityType, entityId }) {
@@ -51,7 +52,7 @@ async function notifyAdmins({ type, title, message, entityType, entityId }) {
 
 
 // GET all leave requests - with employee details
-router.get('/', auth, async (req, res) => {
+router.get('/', auth, authorize('leave_requests', 'view'), async (req, res) => {
   try {
     const result = await query(
       `SELECT lr.*, 
@@ -82,7 +83,7 @@ router.get('/types', auth, async (req, res) => {
 });
 
 // GET leave requests by employee
-router.get('/employee/:id', auth, async (req, res) => {
+router.get('/employee/:id', auth, authorize('leave_requests', 'view'), async (req, res) => {
   try {
     const result = await query(
       `SELECT lr.*,     
@@ -101,7 +102,7 @@ router.get('/employee/:id', auth, async (req, res) => {
 });
 
 // GET leave credits - using the view
-router.get('/credits/:id', auth, async (req, res) => {
+router.get('/credits/:id', auth, authorize('leave_credits', 'view'), async (req, res) => {
   try {
     const result = await query(
       `SELECT * FROM v_leave_balance_current_year WHERE employee_id = $1`,
@@ -114,7 +115,7 @@ router.get('/credits/:id', auth, async (req, res) => {
 });
 
 // PUT allocate leave credits to all employees
-router.put('/credits/allocate', auth, async (req, res) => {
+router.put('/credits/allocate', auth, authorize('leave_credits', 'edit'), async (req, res) => {
   const { vl, sl, el, year = new Date().getFullYear() } = req.body;
 
   const client = await pool.connect();
@@ -160,7 +161,7 @@ router.put('/credits/allocate', auth, async (req, res) => {
 });
 
 // PUT update leave credits for a single employee
-router.put('/credits/:employee_id', auth, async (req, res) => {
+router.put('/credits/:employee_id', auth, authorize('leave_credits', 'edit'), async (req, res) => {
   const { employee_id } = req.params;
   const { vl, vlLeft, sl, slLeft, el, elLeft, year = new Date().getFullYear() } = req.body;
 
@@ -277,7 +278,7 @@ router.post('/', auth, async (req, res) => {
 });
 
 // APPROVE/REJECT leave request — auto-notifies employee
-router.put('/:id/status', auth, async (req, res) => {
+router.put('/:id/status', auth, authorize('leave_requests', 'edit'), async (req, res) => {
   const { status, approval_remarks } = req.body;
   const approved_by = req.user.id;
   
@@ -450,7 +451,7 @@ router.put('/:id/cancel', auth, async (req, res) => {
 
 // for Admin 
 // 1. GET all leave credits for all employees for the current year
-router.get('/credits', auth, async (req, res) => {
+router.get('/credits', auth, authorize('leave_credits', 'view'), async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT 
@@ -481,7 +482,7 @@ router.get('/credits', auth, async (req, res) => {
   }
 });
 // 2. PUT update leave credits for a single employee (Vacation, Sick, Emergency)
-router.put('/credits', auth, async (req, res) => {
+router.put('/credits', auth, authorize('leave_credits', 'edit'), async (req, res) => {
   const { employee_id, year, vl_total, vl_used, sl_total, sl_used, el_total, el_used } = req.body;
   try {
     const updateCredit = async (code, total, used) => {
@@ -505,7 +506,7 @@ router.put('/credits', auth, async (req, res) => {
   }
 });
 // 3. POST allocate/bulk reset leave credits for all active employees
-router.post('/credits/allocate', auth, async (req, res) => {
+router.post('/credits/allocate', auth, authorize('leave_credits', 'edit'), async (req, res) => {
   const { vl, sl, el } = req.body;
   const year = new Date().getFullYear();
   try {

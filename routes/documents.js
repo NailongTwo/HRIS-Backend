@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
+const authorize = require('../middleware/authorize');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 
@@ -24,7 +25,7 @@ const upload = multer({
 });
 
 // ─── GET all document types ────────────────────────────────────────────────────
-router.get('/types', auth, async (req, res) => {
+router.get('/types', auth, authorize('documents', 'view'), async (req, res) => {
   try {
     const result = await pool.query(
       'SELECT * FROM document_types WHERE is_active = true ORDER BY name ASC'
@@ -36,7 +37,7 @@ router.get('/types', auth, async (req, res) => {
 });
 
 // ─── GET all employee documents (admin view) ──────────────────────────────────
-router.get('/', auth, async (req, res) => {
+router.get('/', auth, authorize('documents', 'view'), async (req, res) => {
   try {
     const { employee_id, status, category } = req.query;
     let query = `
@@ -195,7 +196,7 @@ router.post('/upload', auth, upload.single('file'), async (req, res) => {
 
 
 // ─── UPDATE document status ────────────────────────────────────────────────────
-router.put('/:id/status', auth, async (req, res) => {
+router.put('/:id/status', auth, authorize('documents', 'edit'), async (req, res) => {
   const { status, remarks, acknowledged_by } = req.body;
   try {
     const result = await pool.query(
