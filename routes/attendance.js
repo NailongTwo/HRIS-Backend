@@ -559,11 +559,25 @@ router.put('/time-out/:id', auth, async (req, res) => {
 
     const timeIn = new Date(log.time_in);
     const now = new Date();
-    const hoursWorked = ((now - timeIn) / 3600000).toFixed(2);
-
-    // Fetch the employee's schedule details
+    
+    // Fetch the employee's schedule details FIRST (need it before computing hours)
     const logDateStr = new Date(log.log_date).toISOString().split('T')[0];
     const { scheduleDay, shiftTimes } = await getBusinessDateAndSchedule(log.employee_id, timeIn);
+    
+    // Cap effective start at scheduled start — early clock-ins don't earn extra paid hours
+    const effectiveStart = (shiftTimes.expectedStart && timeIn < shiftTimes.expectedStart)
+      ? shiftTimes.expectedStart
+      : timeIn;
+    
+    // Cap effective end at scheduled end — late clock-outs beyond shift don't earn extra hours
+    // unless covered by an approved OT request (handled separately, not here)
+    const effectiveEnd = (shiftTimes.expectedEnd && now > shiftTimes.expectedEnd)
+      ? shiftTimes.expectedEnd
+      : now;
+    
+    const hoursWorked = effectiveEnd > effectiveStart
+      ? ((effectiveEnd - effectiveStart) / 3600000).toFixed(2)
+      : '0.00';
 
     let undertimeMins = 0;
     let attendanceStatus = log.attendance_status || 'Present';
@@ -680,11 +694,12 @@ router.put('/:id/adjust', auth, authorize('attendance', 'edit'), async (req, res
 
     const finalTimeIn = (time_in && !isNaN(new Date(time_in).getTime())) ? new Date(time_in) : null;
     const finalTimeOut = (time_out && !isNaN(new Date(time_out).getTime())) ? new Date(time_out) : null;
-
+    
     let hoursWorked = null;
     if (finalTimeIn && finalTimeOut) {
-      hoursWorked = ((finalTimeOut - finalTimeIn) / 3600000).toFixed(2);
-      if (hoursWorked < 0) hoursWorked = 0;
+      const effIn = (expectedStart && finalTimeIn < expectedStart) ? expectedStart : finalTimeIn;
+      const effOut = (expectedEnd && finalTimeOut > expectedEnd) ? expectedEnd : finalTimeOut;
+      hoursWorked = effOut > effIn ? ((effOut - effIn) / 3600000).toFixed(2) : '0.00';
     }
 
     let dayType = 'Regular Working Day';
