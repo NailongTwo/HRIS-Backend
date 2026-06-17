@@ -378,7 +378,8 @@ router.get('/summary', auth, authorize('attendance', 'view'), async (req, res) =
         ) AS days_worked,
         COUNT(*) FILTER (WHERE attendance_status = 'Absent')    AS days_absent,
         COUNT(*) FILTER (WHERE flag = 'Holiday')   AS days_holiday,
-        COALESCE(SUM(late_mins), 0) AS late_mins_total
+        COALESCE(SUM(late_mins), 0) AS late_mins_total,
+        COALESCE(SUM(undertime_mins), 0) AS undertime_mins_total
       FROM attendance_logs
       WHERE employee_id = $1
         AND log_date >= $2
@@ -425,12 +426,14 @@ router.get('/summary', auth, authorize('attendance', 'view'), async (req, res) =
     const daysLeave     = parseFloat(leaveRow.total_leave_days) || 0;
     const daysHoliday   = parseInt(attRow.days_holiday) || 0;
     const lateMins      = parseInt(attRow.late_mins_total) || 0;
+    const undertimeMins = parseInt(attRow.undertime_mins_total) || 0;
     const otHours       = parseFloat(otRow.total_ot_hours) || 0;
  
     // Calculate pay values
     const overtimePay   = (otHours * hourlyRate * 1.25).toFixed(2);
     const holidayPay    = (daysHoliday * dailyRate).toFixed(2);
     const lateDeduction = ((lateMins / 60) * hourlyRate).toFixed(2);
+    const undertimeDeduction = ((undertimeMins / 60) * hourlyRate).toFixed(2);
     const absentDeduction = (daysAbsent * dailyRate).toFixed(2);
  
     res.json({
@@ -440,9 +443,11 @@ router.get('/summary', auth, authorize('attendance', 'view'), async (req, res) =
       days_holiday:     daysHoliday,
       ot_hours:         otHours,
       late_mins_total:  lateMins,
+      undertime_mins_total: undertimeMins,  
       overtime_pay:     overtimePay,
       holiday_pay:      holidayPay,
       late_deduction:   lateDeduction,
+      undertime_deduction: undertimeDeduction, 
       absent_deduction: absentDeduction,
     });
   } catch (err) {
