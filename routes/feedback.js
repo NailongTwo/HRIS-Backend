@@ -50,4 +50,22 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
+
+
+
+// PUT update feedback status (admin)
+router.put('/:id/status', auth, async (req, res) => {
+  const { status } = req.body;
+  try {
+    const result = await pool.query(
+      'UPDATE feedback SET status = $1 WHERE id = $2 RETURNING *',
+      [status, req.params.id]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Feedback status update error:', err.message);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
 module.exports = router;
