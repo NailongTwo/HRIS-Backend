@@ -5,6 +5,24 @@ const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
 const bcrypt = require('bcryptjs');
+const multer = require('multer');
+const { createClient } = require('@supabase/supabase-js');
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+const avatarStorage = multer.memoryStorage();
+const avatarUpload = multer({
+  storage: avatarStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
+    if (allowed.includes(file.mimetype)) cb(null, true);
+    else cb(new Error('Only JPG, PNG, and WEBP images are allowed.'));
+  }
+});
 
 // GET employees as lightweight list — for dropdowns/pickers/charts, any authenticated user
 router.get('/simple', auth, async (req, res) => {
@@ -354,6 +372,49 @@ router.put('/:id/government-ids', auth, async (req, res) => {
     res.status(500).json({ message: 'Server error', error: err.message });
   } finally {
     client.release();
+  }
+});
+
+// UPLOAD employee avatar/profile picture to Supabase
+router.post('/:id/avatar', auth, avatarUpload.single('file'), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const existing = await pool.query('SELECT id FROM employees WHERE id = $1', [id]);
+    if (!existing.rows[0]) return res.status(404).json({ message: 'Employee not found' });
+
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded.' });
+    }
+
+    const filePath = `avatars/emp_${id}_${Date.now()}.jpg`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('hris-files')
+      .upload(filePath, req.file.buffer, {
+        contentType: 'image/jpeg',
+        upsert: true
+      });
+
+    if (uploadError) {
+      console.error('Supabase upload error:', uploadError.message);
+      return res.status(500).json({ message: 'Cloud storage upload failed.', error: uploadError.message });
+    }
+
+    const { data: urlData } = supabase.storage.from('hris-files').getPublicUrl(filePath);
+    const avatarUrl = urlData.publicUrl;
+
+    const result = await pool.query(
+      `UPDATE employees SET avatar_url = $1, updated_at = NOW() WHERE id = $2 RETURNING avatar_url`,
+      [avatarUrl, id]
+    );
+
+    res.json({ message: 'Profile picture updated successfully!', avatar_url: result.rows[0].avatar_url });
+  } catch (err) {
+    if (err.message?.includes('Only JPG')) {
+      return res.status(400).json({ message: err.message });
+    }
+    res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
