@@ -64,7 +64,7 @@ router.get('/', auth, authorize('documents', 'view'), async (req, res) => {
       params.push(category);
       query += ` AND dt.category = $${params.length}`;
     }
-    query += ' ORDER BY e.last_name ASC, dt.name ASC';
+    query += ' ORDER BY ed.created_at DESC';
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) {
@@ -79,7 +79,7 @@ router.get('/employee/:id', auth, async (req, res) => {
       `SELECT ed.*, dt.name as document_type_name, dt.category
       FROM employee_documents ed
       JOIN document_types dt ON ed.document_type_id = dt.id
-      WHERE ed.employee_id = $1 AND ed.is_current = true AND ed.status = 'Complete'
+      WHERE ed.employee_id = $1 AND ed.is_current = true
       ORDER BY dt.name ASC`,
       [req.params.id]
     );
