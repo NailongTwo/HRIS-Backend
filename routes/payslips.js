@@ -214,6 +214,7 @@ router.post('/', auth, authorize('payslips', 'create'), async (req, res) => {
     pagibig_deduction,
     withholding_tax,
     late_deduction,
+    undertime_deduction, 
     absent_deduction,
     other_deductions,
     total_deductions,
@@ -223,6 +224,7 @@ router.post('/', auth, authorize('payslips', 'create'), async (req, res) => {
     days_leave,
     ot_hours,
     late_mins_total,
+    undertime_mins_total,
     generated_by
   } = req.body;
 
@@ -242,16 +244,16 @@ router.post('/', auth, authorize('payslips', 'create'), async (req, res) => {
       (reference_no, employee_id, pay_period_id, basic_pay, overtime_pay,
       holiday_pay, allowances, other_earnings, gross_pay, sss_deduction,
       philhealth_deduction, pagibig_deduction, withholding_tax, late_deduction,
-      absent_deduction, other_deductions, total_deductions, net_pay,
-      days_worked, days_absent, days_leave, ot_hours, late_mins_total, generated_by) 
+      undertime_deduction, absent_deduction, other_deductions, total_deductions, net_pay,
+      days_worked, days_absent, days_leave, ot_hours, late_mins_total, undertime_mins_total, generated_by) 
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 
-      $15, $16, $17, $18, $19, $20, $21, $22, $23, $24) 
+      $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26) 
       RETURNING *`,
       [refNo, employee_id, pay_period_id, basic_pay, overtime_pay,
       holiday_pay, allowances, other_earnings, gross_pay, sss_deduction,
       philhealth_deduction, pagibig_deduction, withholding_tax, late_deduction,
-      absent_deduction, other_deductions, total_deductions, net_pay,
-      days_worked, days_absent, days_leave, ot_hours, late_mins_total, generated_by]
+      undertime_deduction, absent_deduction, other_deductions, total_deductions, net_pay,
+      days_worked, days_absent, days_leave, ot_hours, late_mins_total, undertime_mins_total, generated_by]
     );
     res.json(result.rows[0]);
   } catch (err) {
