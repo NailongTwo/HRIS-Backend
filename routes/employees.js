@@ -46,7 +46,9 @@ router.get('/', auth, authorize('employees', 'view'), async (req, res) => {
 router.get('/:id', auth, authorize('employees', 'view'), async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT v.*, u.role_id, COALESCE(r.name, u.role::text) as role
+      SELECT v.*, u.role_id, COALESCE(r.name, u.role::text) as role,
+             e.civil_status, e.gender, e.nationality,
+             e.curr_street, e.curr_barangay, e.curr_city, e.curr_province, e.curr_zip_code, e.curr_country
       FROM v_employee_current_employment v
       JOIN employees e ON v.employee_id = e.id
       JOIN users u ON e.user_id = u.id
@@ -185,6 +187,8 @@ router.put('/:id', auth, authorize('employees', 'edit'), async (req, res) => {
     first_name, middle_name, last_name,
     date_of_birth, gender, civil_status,
     nationality, personal_email, personal_phone,
+    // Address
+    curr_street, curr_barangay, curr_city, curr_province, curr_zip_code,
     // Employment
     department_id, position_id,
     employment_type, work_setup, basic_salary,
@@ -214,13 +218,19 @@ router.put('/:id', auth, authorize('employees', 'edit'), async (req, res) => {
            personal_email   = $8,
            personal_phone   = $9,
            work_schedule_id = COALESCE($10::uuid, work_schedule_id),
+           curr_street       = $11,
+           curr_barangay     = $12,
+           curr_city         = $13,
+           curr_province     = $14,
+           curr_zip_code     = $15,
            updated_at       = NOW()
-       WHERE id = $11
+       WHERE id = $16
        RETURNING *`,
       [first_name, middle_name, last_name,
        safeDob, gender, civil_status,
        nationality, personal_email, personal_phone,
        work_schedule_id || null,
+       curr_street, curr_barangay, curr_city, curr_province, curr_zip_code,
        req.params.id]
     );
 
@@ -292,6 +302,58 @@ router.delete('/:id', auth, authorize('employees', 'delete'), async (req, res) =
     res.json({ message: 'Employee deactivated successfully!' });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+// GET government IDs for an employee
+router.get('/:id/government-ids', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id_type, id_number, issued_date, expiry_date, is_verified
+       FROM employee_government_ids
+       WHERE employee_id = $1`,
+      [req.params.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+// UPSERT government IDs for an employee (accepts array of { id_type, id_number })
+router.put('/:id/government-ids', auth, async (req, res) => {
+  const { ids } = req.body; // [{ id_type: 'PhilSys', id_number: '...' }, ...]
+  if (!Array.isArray(ids)) {
+    return res.status(400).json({ message: 'ids must be an array' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    for (const item of ids) {
+      const { id_type, id_number } = item;
+      if (!id_type) continue;
+
+      // Skip empty values entirely (don't create empty rows)
+      if (!id_number || !id_number.trim()) continue;
+
+      await client.query(
+        `INSERT INTO employee_government_ids (employee_id, id_type, id_number)
+         VALUES ($1, $2::gov_id_type, $3)
+         ON CONFLICT (employee_id, id_type)
+         DO UPDATE SET id_number = EXCLUDED.id_number, updated_at = NOW()`,
+        [req.params.id, id_type, id_number.trim()]
+      );
+    }
+
+    await client.query('COMMIT');
+    res.json({ message: 'Government IDs updated successfully!' });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ message: 'Server error', error: err.message });
+  } finally {
+    client.release();
   }
 });
 
