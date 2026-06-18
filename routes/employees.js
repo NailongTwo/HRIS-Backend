@@ -335,6 +335,22 @@ router.delete('/:id', auth, authorize('employees', 'delete'), async (req, res) =
   }
 });
 
+// REACTIVATE employee — opposite of soft delete
+router.put('/:id/reactivate', auth, authorize('employees', 'edit'), async (req, res) => {
+  try {
+    const result = await query(
+      `UPDATE employees SET status='Active', updated_at=NOW() WHERE id=$1 RETURNING *`,
+      [req.params.id]
+    );
+    if (!result.rows[0]) {
+      return res.status(404).json({ message: 'Employee not found' });
+    }
+    res.json({ message: 'Employee reactivated successfully!', employee: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
 // GET government IDs for an employee
 router.get('/:id/government-ids', auth, async (req, res) => {
   try {
