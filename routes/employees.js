@@ -174,11 +174,23 @@ router.post('/', auth, authorize('employees', 'create'), async (req, res) => {
     // 5. Create employment record
     await client.query(
       `INSERT INTO employment_records
-        (employee_id, position_id, department_id, employment_type,
-         work_setup, hire_date, effective_date, basic_salary, required_time_in)
-       VALUES ($1, $2, $3, $4, $5, $6, $6, $7, '08:00:00')`,
+         (employee_id, position_id, department_id, employment_type,
+          work_setup, hire_date, effective_date, required_time_in)
+       VALUES ($1, $2, $3, $4, $5, $6, $6, '08:00:00')`,
       [employee_id, position_id, department_id, employment_type || 'Full-Time',
-       work_setup || 'On-site', hire_date, basic_salary]
+       work_setup || 'On-site', hire_date]
+    );
+
+    await client.query(
+      `INSERT INTO compensation_records
+         (employee_id, basic_salary, effective_date, change_reason)
+       VALUES ($1, $2, $3, $4)`,
+      [
+        employee_id, 
+        basic_salary || 0, 
+        hire_date, 
+        'Initial Onboarding'
+      ]
     );
 
     await client.query('COMMIT');
