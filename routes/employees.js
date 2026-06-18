@@ -318,6 +318,43 @@ router.put('/:id', auth, authorize('employees', 'edit'), async (req, res) => {
   }
 });
 
+// RESET PASSWORD — regenerate default password (first name + last 4 of employee_no)
+router.put('/:id/reset-password', auth, authorize('employees', 'edit'), async (req, res) => {
+  try {
+    const empRes = await pool.query(
+      `SELECT e.id, e.first_name, e.employee_no, e.user_id
+       FROM employees e
+       WHERE e.id = $1`,
+      [req.params.id]
+    );
+
+    if (!empRes.rows[0]) {
+      return res.status(404).json({ message: 'Employee not found' });
+    }
+
+    const { first_name, employee_no, user_id } = empRes.rows[0];
+
+    if (!user_id) {
+      return res.status(400).json({ message: 'This employee has no linked user account.' });
+    }
+
+    const defaultPassword = `${first_name.toLowerCase()}${employee_no.slice(-4)}`;
+    const password_hash = await bcrypt.hash(defaultPassword, 10);
+
+    await pool.query(
+      `UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`,
+      [password_hash, user_id]
+    );
+
+    res.json({
+      message: 'Password reset successfully!',
+      default_password: defaultPassword
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
 
 // SOFT DELETE - set status to Inactive
 router.delete('/:id', auth, authorize('employees', 'delete'), async (req, res) => {
