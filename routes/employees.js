@@ -44,6 +44,22 @@ router.get('/simple', auth, async (req, res) => {
   }
 });
 
+// GET next available employee number (e.g. HS-008) — for Add Employee modal preview
+router.get('/next-employee-no', auth, authorize('employees', 'create'), async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT COALESCE(MAX(CAST(SPLIT_PART(employee_no, '-', 2) AS INTEGER)), 0) AS max_seq
+      FROM employees
+      WHERE employee_no LIKE 'HS-%'
+    `);
+    const nextSeq = (result.rows[0].max_seq || 0) + 1;
+    const nextEmployeeNo = `HS-${String(nextSeq).padStart(3, '0')}`;
+    res.json({ employee_no: nextEmployeeNo });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
 // GET all employees - using the view joined with users and roles
 router.get('/', auth, authorize('employees', 'view'), async (req, res) => {
   try {
@@ -90,7 +106,7 @@ router.post('/', auth, authorize('employees', 'create'), async (req, res) => {
     username,
     role_id, // Accept role_id UUID instead of raw role enum
     // Personal info
-    employee_no,
+    
     first_name,
     middle_name,
     last_name,
@@ -111,8 +127,8 @@ router.post('/', auth, authorize('employees', 'create'), async (req, res) => {
   } = req.body;
 
   // Validate required fields to avoid database constraint violations
-  if (!email || !employee_no || !first_name || !last_name || !gender || !civil_status || !date_of_birth || date_of_birth.trim() === '') {
-    return res.status(400).json({ message: 'Missing required personal details: email, employee number, first name, last name, date of birth, gender, and civil status are required.' });
+  if (!email || !first_name || !last_name || !gender || !civil_status || !date_of_birth || date_of_birth.trim() === '') {
+    return res.status(400).json({ message: 'Missing required personal details: email, first name, last name, date of birth, gender, and civil status are required.' });
   }
 
   if (!work_schedule_id) {
@@ -134,7 +150,17 @@ router.post('/', auth, authorize('employees', 'create'), async (req, res) => {
       return res.status(400).json({ message: 'Email already exists!' });
     }
 
-    // 2. Generate default password (first name + last 4 of employee_no)
+    // 2. Generate next employee number atomically within this transaction
+    const seqRes = await client.query(`
+      SELECT COALESCE(MAX(CAST(SPLIT_PART(employee_no, '-', 2) AS INTEGER)), 0) AS max_seq
+      FROM employees
+      WHERE employee_no LIKE 'HS-%'
+      FOR UPDATE
+    `);
+    const nextSeq = (seqRes.rows[0].max_seq || 0) + 1;
+    const employee_no = `HS-${String(nextSeq).padStart(3, '0')}`;
+
+    // 3 Generate default password (first name + last 4 of employee_no)
     const defaultPassword = `${first_name.toLowerCase()}${employee_no.slice(-4)}`;
     const password_hash = await bcrypt.hash(defaultPassword, 10);
 
