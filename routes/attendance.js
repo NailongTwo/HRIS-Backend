@@ -137,7 +137,6 @@ async function getBusinessDateAndSchedule(employeeId, now = new Date()) {
 // Sync function to generate Absent and On Leave logs
 async function syncEmployeeAttendance(employeeId) {
   try {
-    // hire_date lives in employment_records, not employees
     const empRes = await pool.query(
       `SELECT e.status, e.work_schedule_id, er.hire_date
        FROM employees e
@@ -173,7 +172,7 @@ async function syncEmployeeAttendance(employeeId) {
     scheduleRes.rows.forEach(r => {
       schedule[r.day_of_week] = r;
     });
-
+ 
     const getScheduleForDate = (d) => {
       const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
       const dayName = DAYS_OF_WEEK[d.getDay()];
@@ -217,8 +216,8 @@ async function syncEmployeeAttendance(employeeId) {
       const d = new Date(date.toISOString().split('T')[0]);
       return leaves.find(l => d >= l.start && d <= l.end);
     };
-
-    // Fetch calendar holidays in Manila timezone
+ 
+    // Fetch calendar holidays
     const holidaysRes = await pool.query(
       `SELECT e.start_datetime::date as start_date, e.end_datetime::date as end_date,
               e.is_non_working_day AS event_override, et.is_non_working_day AS type_default
@@ -228,7 +227,7 @@ async function syncEmployeeAttendance(employeeId) {
          AND NOT (e.end_datetime::date < $1 OR e.start_datetime::date > $2)`,
       [startDateStr, todayStrParam]
     );
-
+ 
     const checkHoliday = (date) => {
       const d = new Date(date.toISOString().split('T')[0]);
       const matches = holidaysRes.rows.filter(h => {
@@ -237,13 +236,13 @@ async function syncEmployeeAttendance(employeeId) {
         return d >= start && d <= end;
       });
       if (matches.length === 0) return false;
-
+ 
       const hasForceTrue = matches.some(m => m.event_override === true);
       if (hasForceTrue) return true;
-
+ 
       const hasForceFalse = matches.some(m => m.event_override === false);
       if (hasForceFalse) return false;
-
+ 
       return matches.some(m => m.type_default === true);
     };
     
@@ -255,34 +254,47 @@ async function syncEmployeeAttendance(employeeId) {
       const isHoliday = checkHoliday(d);
       const schedDay = getScheduleForDate(d);
       
-      // Precedence Logic
+      // ✅ FIXED LOGIC: Determine day_type and initial flags
       let dayType = 'Regular Working Day';
       let attendanceStatus = null;
       let flag = 'On Time';
       
       if (leave) {
+        // On approved leave
         dayType = 'Regular Working Day';
         attendanceStatus = 'On Leave';
         flag = 'On Leave';
       } else if (isHoliday) {
+        // Holiday (non-working day)
         dayType = 'Non-Working Holiday';
         attendanceStatus = null;
         flag = 'Holiday';
       } else if (!schedDay.is_working) {
+        // Rest day (Saturday, Sunday, etc.)
         dayType = 'Rest Day';
         attendanceStatus = null;
         flag = 'Rest Day';
       } else {
+        // Regular working day
         dayType = 'Regular Working Day';
-        attendanceStatus = 'Absent';
-        flag = 'Absent';
+        
+        // ✅ KEY FIX: Don't mark today as absent yet
+        // Only mark as absent if it's a PAST date (yesterday or earlier)
+        if (isToday) {
+          // For today: leave as null until employee clocks in/out or day ends
+          attendanceStatus = null;
+          flag = 'Pending'; // New flag for "not yet clocked in"
+        } else {
+          // For past dates: mark as absent if no time_in recorded
+          attendanceStatus = 'Absent';
+          flag = 'Absent';
+        }
       }
       
       const log = existingLogs[dateStr];
       
       if (!log) {
         // Always insert a placeholder for any day (including today).
-        // If the employee clocks in later, the clock-in route will UPDATE this record.
         await pool.query(
           `INSERT INTO attendance_logs (employee_id, log_date, source, flag, day_type, attendance_status, remarks) 
            VALUES ($1, $2, 'System', $3, $4, $5, $6)`,
@@ -290,7 +302,7 @@ async function syncEmployeeAttendance(employeeId) {
         );
       } else {
         if (!log.time_in) {
-          // If a log exists without time_in (Absent/Holiday/Rest Day), sync details
+          // If a log exists without time_in, sync details
           if (log.flag !== flag || log.day_type !== dayType || log.attendance_status !== attendanceStatus) {
             await pool.query(
               `UPDATE attendance_logs 
@@ -307,7 +319,7 @@ async function syncEmployeeAttendance(employeeId) {
           } else if (!schedDay.is_working) {
             finalDayType = 'Rest Day';
           }
-
+ 
           if (log.day_type !== finalDayType) {
             await pool.query(
               `UPDATE attendance_logs SET day_type = $1, updated_at = NOW() WHERE id = $2`,
@@ -321,6 +333,7 @@ async function syncEmployeeAttendance(employeeId) {
     console.error(`[syncEmployeeAttendance] Error for employee ${employeeId}:`, err.message);
   }
 }
+
 
 // GET all attendance logs
 router.get('/', auth, authorize('attendance', 'view'), async (req, res) => {
