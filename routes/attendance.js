@@ -68,12 +68,12 @@ async function getBusinessDateAndSchedule(employeeId, now = new Date()) {
     if (schedule[dayName]) {
       return schedule[dayName];
     }
-    // Safe default fallback
+    // If schedule data missing, treat as non-working to avoid incorrect defaults
     return {
       day_of_week: dayName,
-      is_working: !['Saturday', 'Sunday'].includes(dayName),
-      start_time: '08:00:00',
-      end_time: '17:00:00',
+      is_working: false,
+      start_time: null,
+      end_time: null,
       grace_period_minutes: 0
     };
   };
@@ -161,16 +161,20 @@ async function syncEmployeeAttendance(employeeId) {
     const startDateStr = startDate.toISOString().split('T')[0];
     const todayStrParam = today.toISOString().split('T')[0];
     
-    // Fetch work schedule details
+    // Fetch work schedule details + time_out_grace_minutes
     const scheduleRes = await pool.query(
-      `SELECT wsd.day_of_week, wsd.is_working, wsd.start_time, wsd.end_time
+      `SELECT wsd.day_of_week, wsd.is_working, wsd.start_time, wsd.end_time,
+              COALESCE(ws.time_out_grace_minutes, 60) AS time_out_grace_minutes
        FROM work_schedule_days wsd
+       JOIN work_schedules ws ON wsd.work_schedule_id = ws.id
        WHERE wsd.work_schedule_id = $1`,
       [empRes.rows[0].work_schedule_id]
     );
     const schedule = {};
+    let timeOutGraceMinutes = 60;
     scheduleRes.rows.forEach(r => {
       schedule[r.day_of_week] = r;
+      timeOutGraceMinutes = r.time_out_grace_minutes;
     });
  
     const getScheduleForDate = (d) => {
@@ -179,9 +183,10 @@ async function syncEmployeeAttendance(employeeId) {
       if (schedule[dayName]) return schedule[dayName];
       return {
         day_of_week: dayName,
-        is_working: !['Saturday', 'Sunday'].includes(dayName),
-        start_time: '08:00:00',
-        end_time: '17:00:00'
+        is_working: false,
+        start_time: null,
+        end_time: null,
+        time_out_grace_minutes: 60
       };
     };
     
@@ -249,49 +254,68 @@ async function syncEmployeeAttendance(employeeId) {
     for (let d = new Date(startDate); d <= today; d.setDate(d.getDate() + 1)) {
       const dateStr = d.toISOString().split('T')[0];
       const isToday = dateStr === todayStrParam;
+      const log = existingLogs[dateStr];
       
       const leave = getApprovedLeave(d);
       const isHoliday = checkHoliday(d);
       const schedDay = getScheduleForDate(d);
       
-      // ✅ FIXED LOGIC: Determine day_type and initial flags
       let dayType = 'Regular Working Day';
       let attendanceStatus = null;
-      let flag = 'On Time';
+      let flag = 'Pending';
       
       if (leave) {
-        // On approved leave
         dayType = 'Regular Working Day';
         attendanceStatus = 'On Leave';
         flag = 'On Leave';
       } else if (isHoliday) {
-        // Holiday (non-working day)
         dayType = 'Non-Working Holiday';
         attendanceStatus = null;
         flag = 'Holiday';
       } else if (!schedDay.is_working) {
-        // Rest day (Saturday, Sunday, etc.)
         dayType = 'Rest Day';
         attendanceStatus = null;
         flag = 'Rest Day';
       } else {
-        // Regular working day
         dayType = 'Regular Working Day';
         
-        // ✅ KEY FIX: Don't mark today as absent yet
-        // Only mark as absent if it's a PAST date (yesterday or earlier)
-        if (isToday) {
-          // For today: leave as null until employee clocks in/out or day ends
-          attendanceStatus = null;
-          flag = 'Pending'; // New flag for "not yet clocked in"
-        } else {
-          // For past dates: mark as absent if no time_in recorded
-          attendanceStatus = 'Absent';
-          flag = 'Absent';
+        const hasTimeIn = log && log.time_in;
+        const hasTimeOut = log && log.time_out;
+        
+        const nowManila = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Manila' }));
+        let shiftEnded = !isToday;
+        let timeOutGraceEnded = !isToday;
+        
+        if (isToday && schedDay.end_time) {
+          const [sh, sm] = (schedDay.start_time || '00:00').split(':').map(Number);
+          const [eh, em] = schedDay.end_time.split(':').map(Number);
+          const isOvernight = sh > eh || (sh === eh && sm > em);
+          const grace = schedDay.time_out_grace_minutes || 60;
+          
+          const shiftEnd = new Date(today);
+          if (isOvernight) shiftEnd.setDate(shiftEnd.getDate() + 1);
+          shiftEnd.setHours(eh, em, 0, 0);
+          shiftEnded = nowManila > shiftEnd;
+          
+          const graceEnd = new Date(today);
+          if (isOvernight) graceEnd.setDate(graceEnd.getDate() + 1);
+          graceEnd.setHours(eh, em + grace, 0, 0);
+          timeOutGraceEnded = nowManila > graceEnd;
         }
+        
+        if (hasTimeIn) {
+          if (!hasTimeOut && timeOutGraceEnded) {
+            flag = 'Late Time Out';
+            attendanceStatus = 'Late Time Out';
+          }
+        } else if (shiftEnded) {
+          flag = 'Absent';
+          attendanceStatus = 'Absent';
+        }
+        // else: still pending — flag stays NULL (blank)
       }
       
-      const log = existingLogs[dateStr];
+      // ─── Upsert the attendance log ───
       
       if (!log) {
         // Always insert a placeholder for any day (including today).
@@ -312,18 +336,39 @@ async function syncEmployeeAttendance(employeeId) {
             );
           }
         } else {
-          // If log has time_in (employee clocked in), ensure correct day_type is synced
+          // Log has time_in — sync day_type and apply Late Time Out if past grace
           let finalDayType = 'Regular Working Day';
           if (isHoliday) {
             finalDayType = 'Non-Working Holiday';
           } else if (!schedDay.is_working) {
             finalDayType = 'Rest Day';
           }
- 
-          if (log.day_type !== finalDayType) {
+          
+          const needsDayTypeUpdate = log.day_type !== finalDayType;
+          const needsLateTimeOut = flag === 'Late Time Out' && log.flag !== 'Late Time Out' && !log.time_out;
+          
+          if (needsDayTypeUpdate || needsLateTimeOut) {
+            const setClauses = [];
+            const values = [];
+            let paramIdx = 1;
+            
+            if (needsDayTypeUpdate) {
+              setClauses.push(`day_type = $${paramIdx++}`);
+              values.push(finalDayType);
+            }
+            if (needsLateTimeOut) {
+              setClauses.push(`flag = $${paramIdx++}`);
+              values.push('Late Time Out');
+              setClauses.push(`attendance_status = $${paramIdx++}`);
+              values.push('Late Time Out');
+            }
+            
+            setClauses.push(`updated_at = NOW()`);
+            values.push(log.id);
+            
             await pool.query(
-              `UPDATE attendance_logs SET day_type = $1, updated_at = NOW() WHERE id = $2`,
-              [finalDayType, log.id]
+              `UPDATE attendance_logs SET ${setClauses.join(', ')} WHERE id = $${paramIdx}`,
+              values
             );
           }
         }
@@ -502,6 +547,19 @@ router.post('/time-in', auth, async (req, res) => {
 
     if (existing.rows.length > 0 && existing.rows[0].time_in) {
       return res.status(400).json({ message: 'Already timed in today!' });
+    }
+
+    if (existing.rows.length > 0 && existing.rows[0].flag === 'Absent') {
+      return res.status(400).json({ message: 'Absent' });
+    }
+
+    // ── Early time-in window: allow up to 1 hour before shift start ──
+    if (shiftTimes.expectedStart) {
+      const earlyWindow = new Date(shiftTimes.expectedStart);
+      earlyWindow.setHours(earlyWindow.getHours() - 1);
+      if (now < earlyWindow) {
+        return res.status(400).json({ message: 'Too early. Time-in opens 1 hour before your shift.' });
+      }
     }
 
     const isHoliday = await checkHolidayOnDate(businessDateStr);
@@ -689,9 +747,9 @@ router.put('/:id/adjust', auth, authorize('attendance', 'edit'), async (req, res
     if (!scheduleDay) {
       scheduleDay = {
         day_of_week: dayName,
-        is_working: !['Saturday', 'Sunday'].includes(dayName),
-        start_time: '08:00:00',
-        end_time: '17:00:00',
+        is_working: false,
+        start_time: null,
+        end_time: null,
         grace_period_minutes: 0
       };
     }
