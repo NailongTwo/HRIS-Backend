@@ -29,20 +29,26 @@ router.post('/login', async (req, res) => {
 
     const user = userResult.rows[0];
     console.log("User found. Comparing passwords...");
-
+    
     const isMatch = await bcrypt.compare(password, user.password_hash);
     console.log("Password match result:", isMatch);
-
+    
     if (!isMatch) {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
-
-    // Fetch employee_id linked to this user
+    
+    // Fetch employee_id + status linked to this user
     const empResult = await queryWithRetry(
-      'SELECT id FROM employees WHERE user_id = $1',
+      'SELECT id, status FROM employees WHERE user_id = $1',
       [user.id]
     );
-    const employee_id = empResult.rows[0]?.id || null;
+    const employee = empResult.rows[0] || null;
+    const employee_id = employee?.id || null;
+    
+    // Block login if the linked employee record is not Active
+    if (employee && employee.status !== 'Active') {
+      return res.status(403).json({ message: 'Your account is inactive. Please contact HR or your administrator.' });
+    }
 
     // Use dynamic role name, default to enum value if role_id not linked
     const roleName = user.role_name || user.role;
