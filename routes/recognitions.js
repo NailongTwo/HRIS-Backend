@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
+const auditRoute = require('../middleware/auditRoute');
+router.use(auditRoute('recognitions'));
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
-
 // GET all recognitions for an employee
 router.get('/employee/:id', auth, async (req, res) => {
   try {
@@ -73,3 +74,5 @@ router.delete('/:id', auth, authorize('recognition', 'delete'), async (req, res)
 });
 
 module.exports = router;
+
+

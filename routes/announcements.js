@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
+const auditRoute = require('../middleware/auditRoute');
+router.use(auditRoute('announcements'));
 const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
-
 // ── Notify all active employees about a new announcement ──────────────────────
 async function notifyAllEmployees({ title, annId, category }) {
   try {
@@ -113,3 +114,6 @@ router.delete('/:id', auth, authorize('announcements', 'delete'), async (req, re
 });
 
 module.exports = router;
+
+
+

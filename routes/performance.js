@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
+const auditRoute = require('../middleware/auditRoute');
+router.use(auditRoute('performance_evaluations'));
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
-
 // ─── GOALS ───────────────────────────────────────────────
 
 // GET goals for an employee
@@ -203,3 +204,5 @@ router.get('/evaluations/:id/appraisals', auth, async (req, res) => {
 });
 
 module.exports = router;
+
+

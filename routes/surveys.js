@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
+const auditRoute = require('../middleware/auditRoute');
+router.use(auditRoute('surveys'));
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
-
 // GET all active surveys with questions, and whether employee has responded
 router.get('/employee/:id', auth, async (req, res) => {
   try {
@@ -130,3 +131,5 @@ router.get('/:id/responses', auth, authorize('surveys', 'view'), async (req, res
 });
 
 module.exports = router;
+
+

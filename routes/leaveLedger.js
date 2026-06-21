@@ -4,6 +4,9 @@ const pool = require('../config/db');
 const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
+const auditRoute = require('../middleware/auditRoute');
+
+router.use(auditRoute('leave_ledger'));
 
 async function getCurrentBalance(client, employeeId, leaveTypeId, year) {
   const res = await client.query(

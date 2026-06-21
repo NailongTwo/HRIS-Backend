@@ -1,8 +1,9 @@
 const express = require('express');
 const router = express.Router();
+const auditRoute = require('../middleware/auditRoute');
+router.use(auditRoute('notifications'));
 const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
-
 // GET all notifications for the authenticated user
 router.get('/', auth, async (req, res) => {
   try {
@@ -121,3 +122,5 @@ router.put('/:id/archive', auth, async (req, res) => {
 });
 
 module.exports = router;
+
+

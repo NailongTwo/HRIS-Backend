@@ -1,8 +1,9 @@
 const express = require('express');
 const router = express.Router();
+const auditRoute = require('../middleware/auditRoute');
+router.use(auditRoute('document_types'));
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
-
 // GET all document requirements (document_types table)
 router.get('/', auth, async (req, res) => {
   try {
@@ -63,3 +64,6 @@ router.put('/:id', auth, async (req, res) => {
 });
 
 module.exports = router;
+
+
+

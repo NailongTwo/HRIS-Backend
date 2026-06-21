@@ -7,6 +7,10 @@ const authorize = require('../middleware/authorize');
 const bcrypt = require('bcryptjs');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
+const auditRoute = require('../middleware/auditRoute');
+const auditHelper = require('../utils/auditHelper');
+
+router.use(auditRoute('employees'));
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -151,11 +155,12 @@ router.post('/', auth, authorize('employees', 'create'), async (req, res) => {
     }
 
     // 2. Generate next employee number atomically within this transaction
+    // Lock the table to prevent race conditions during sequence generation
+    await client.query('LOCK TABLE employees IN EXCLUSIVE MODE');
     const seqRes = await client.query(`
       SELECT COALESCE(MAX(CAST(SPLIT_PART(employee_no, '-', 2) AS INTEGER)), 0) AS max_seq
       FROM employees
       WHERE employee_no LIKE 'HS-%'
-      FOR UPDATE
     `);
     const nextSeq = (seqRes.rows[0].max_seq || 0) + 1;
     const employee_no = `HS-${String(nextSeq).padStart(3, '0')}`;
@@ -371,6 +376,11 @@ router.put('/:id/reset-password', auth, authorize('employees', 'edit'), async (r
       `UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`,
       [password_hash, user_id]
     );
+
+    auditHelper.log({
+      action: 'UPDATE', table_name: 'users', record_id: user_id,
+      remarks: `Admin reset password for ${first_name} ${employee_no.slice(-4)}`, req,
+    });
 
     res.json({
       message: 'Password reset successfully!',

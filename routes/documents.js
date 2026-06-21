@@ -5,6 +5,10 @@ const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
+const auditRoute = require('../middleware/auditRoute');
+const auditHelper = require('../utils/auditHelper');
+
+router.use(auditRoute('employee_documents'));
 
 // Initialize Supabase Client
 const supabase = createClient(
@@ -224,6 +228,12 @@ router.post('/:id/acknowledge', auth, async (req, res) => {
        RETURNING *`,
       [employee_id, req.params.id, ip_address, user_agent]
     );
+
+    auditHelper.log({
+      action: 'ACKNOWLEDGE', table_name: 'document_acknowledgements', record_id: result.rows[0]?.id,
+      remarks: `Document acknowledged by employee ${employee_id}`, req,
+    });
+
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });

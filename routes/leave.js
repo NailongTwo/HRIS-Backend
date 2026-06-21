@@ -4,6 +4,10 @@ const pool = require('../config/db');
 const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
+const auditRoute = require('../middleware/auditRoute');
+const auditHelper = require('../utils/auditHelper');
+
+router.use(auditRoute('leave_requests'));
 
 // ── Helper: silent fire-and-forget notification insert ────────────────────────
 async function notify({ recipientId, type, title, message, entityType, entityId }) {
@@ -405,6 +409,15 @@ router.put('/:id/status', auth, authorize('leave_requests', 'edit'), async (req,
     }
 
     await client.query('COMMIT');
+
+    auditHelper.log({
+      action: status === 'Approved' ? 'APPROVE' : 'REJECT',
+      table_name: 'leave_requests',
+      record_id: lr.id,
+      remarks: `Leave request ${status}: ${lr.reference_no}${approval_remarks ? ' - ' + approval_remarks : ''}`,
+      req,
+    });
+
     res.json(lr);
 
     // ── Fire-and-forget notification ──
@@ -441,6 +454,12 @@ router.put('/:id/cancel', auth, async (req, res) => {
     if (!result.rows[0]) {
       return res.status(404).json({ message: 'Leave request not found or already processed!' });
     }
+
+    auditHelper.log({
+      action: 'UPDATE', table_name: 'leave_requests', record_id: req.params.id,
+      remarks: `Leave request cancelled: ${result.rows[0].reference_no || ''}`, req,
+    });
+
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Cancel error:', err.message);

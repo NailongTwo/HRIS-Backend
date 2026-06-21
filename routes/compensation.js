@@ -1,9 +1,10 @@
 // compensation.js – Compensation Records endpoints
 const express = require('express');
 const router = express.Router();
+const auditRoute = require('../middleware/auditRoute');
+router.use(auditRoute('compensation_records'));
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
-
 // ── GET latest compensation for an employee ─────────────────────────────────────
 router.get('/:employee_id', auth, async (req, res) => {
   const { employee_id } = req.params;
@@ -73,3 +74,6 @@ router.post('/', auth, async (req, res) => {
 });
 
 module.exports = router;
+
+
+

@@ -1,8 +1,9 @@
 const express = require('express');
 const router = express.Router();
+const auditRoute = require('../middleware/auditRoute');
+router.use(auditRoute('feedback'));
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
-
 // GET all feedback for an employee
 router.get('/employee/:id', auth, async (req, res) => {
   try {
@@ -52,7 +53,6 @@ router.post('/', auth, async (req, res) => {
 
 
 
-
 // PUT update feedback status (admin)
 router.put('/:id/status', auth, async (req, res) => {
   const { status } = req.body;
@@ -69,3 +69,5 @@ router.put('/:id/status', auth, async (req, res) => {
 });
 
 module.exports = router;
+
+

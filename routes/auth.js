@@ -6,7 +6,11 @@ const pool = require('../config/db');
 const queryWithRetry = require('../config/queryWithRetry');
 const sendEventReminders = require('../cron/eventReminders');
 const auth = require('../middleware/auth');
+const auditRoute = require('../middleware/auditRoute');
+const auditHelper = require('../utils/auditHelper');
 require('dotenv').config();
+
+router.use(auditRoute('users'));
 
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
@@ -62,7 +66,12 @@ router.post('/login', async (req, res) => {
     );
     // Wake-up trigger
     sendEventReminders().catch(err => console.error('[Login] sendEventReminders failed:', err.message));
-    
+
+    auditHelper.log({
+      action: 'LOGIN', table_name: 'users', record_id: user.id,
+      remarks: `Login successful as ${roleName}`, req,
+    });
+
     res.json({
       token,
       role: roleName,
@@ -232,6 +241,12 @@ router.post('/forgot-password', async (req, res) => {
     }
     const hash = await bcrypt.hash(newPassword, 10);
     await queryWithRetry('UPDATE users SET password_hash = $1 WHERE email = $2', [hash, email]);
+
+    auditHelper.log({
+      action: 'UPDATE', table_name: 'users', record_id: userResult.rows[0].id,
+      remarks: 'Password reset via forgot-password', req,
+    });
+
     res.json({ message: 'Password reset successfully.' });
   } catch (err) {
     console.error('forgot-password error:', err.message);

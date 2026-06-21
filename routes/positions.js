@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
+const auditRoute = require('../middleware/auditRoute');
+router.use(auditRoute('positions'));
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
-
 // GET positions as lightweight list — for dropdowns/filters, any authenticated user
 router.get('/simple', auth, async (req, res) => {
   try {
@@ -181,3 +182,5 @@ router.delete('/:id', auth, authorize('job_positions', 'delete'), async (req, re
 });
 
 module.exports = router;
+
+

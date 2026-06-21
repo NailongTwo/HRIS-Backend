@@ -1,10 +1,11 @@
 const express = require('express');
 const router = express.Router();
+const auditRoute = require('../middleware/auditRoute');
+router.use(auditRoute('tasks'));
 const pool = require('../config/db');
 const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
-
 // GET all tasks
 router.get('/', auth, authorize('tasks', 'view'), async (req, res) => {
   try {
@@ -125,3 +126,5 @@ router.post('/:id/comments', auth, async (req, res) => {
 });
 
 module.exports = router;
+
+

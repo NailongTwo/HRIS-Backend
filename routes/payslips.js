@@ -5,6 +5,9 @@ const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
+const auditRoute = require('../middleware/auditRoute');
+
+router.use(auditRoute('payslips'));
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
