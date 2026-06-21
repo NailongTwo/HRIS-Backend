@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 const queryWithRetry = require('../config/queryWithRetry');
+const sendEventReminders = require('../cron/eventReminders');
 const auth = require('../middleware/auth');
 require('dotenv').config();
 
@@ -59,7 +60,9 @@ router.post('/login', async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: '1d' }
     );
-
+    // Wake-up trigger
+    sendEventReminders().catch(err => console.error('[Login] sendEventReminders failed:', err.message));
+    
     res.json({
       token,
       role: roleName,
