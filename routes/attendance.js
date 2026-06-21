@@ -391,9 +391,14 @@ router.get('/', auth, authorize('attendance', 'view'), async (req, res) => {
 
     const result = await query(
       `SELECT al.*, 
-              e.first_name, e.last_name, e.employee_no
+              e.first_name, e.last_name, e.employee_no,
+              COALESCE(ot.planned_hours, 0) AS approved_ot_hours
        FROM attendance_logs al
        JOIN employees e ON al.employee_id = e.id
+       LEFT JOIN overtime_requests ot 
+         ON al.employee_id = ot.employee_id
+         AND al.log_date::date = ot.ot_date::date
+         AND ot.status = 'Approved'
        ORDER BY al.log_date DESC`
     );
     res.json(result.rows);
