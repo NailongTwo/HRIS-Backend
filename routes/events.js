@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
+const sendEventReminders = require('../cron/eventReminders');
 
 // GET all events
 router.get('/', auth, authorize('events', 'view'), async (req, res) => {
@@ -106,6 +107,7 @@ router.post('/', auth, authorize('events', 'create'), async (req, res) => {
        end_datetime, is_all_day || false, is_recurring || false,
        recurrence_rule, visibility || 'All', target_dept_ids, created_by, is_non_working_day === undefined ? null : is_non_working_day]
     );
+    sendEventReminders().catch(err => console.error('[CreateEvent] sendEventReminders failed:', err.message));
     res.json(result.rows[0]);
   } catch (err) {
     console.error('CREATE EVENT ERROR:', err.message);
@@ -141,6 +143,7 @@ router.put('/:id', auth, authorize('events', 'edit'), async (req, res) => {
     if (!result.rows[0]) {
       return res.status(404).json({ message: 'Event not found' });
     }
+    sendEventReminders().catch(err => console.error('[UpdateEvent] sendEventReminders failed:', err.message));
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
