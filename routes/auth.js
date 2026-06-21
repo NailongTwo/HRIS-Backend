@@ -195,7 +195,7 @@ router.put('/change-password', auth, async (req, res) => {
 
     const hash = await bcrypt.hash(new_password, 10);
     await queryWithRetry('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.user.id]);
-    res.json({ message: 'Password changed successfully.' });
+    res.json({ message: 'Password changed successfully.', record: { id: req.user.id } });
   } catch (err) {
     console.error('PUT /change-password error:', err.message);
     res.status(500).json({ message: 'Failed to change password.', error: err.message });

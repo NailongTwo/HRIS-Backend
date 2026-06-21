@@ -19,14 +19,20 @@ function redact(obj) {
 
 function extractRecordId(body, req) {
   if (body?.id) return body.id;
+  if (body?.employee_id) return body.employee_id;
+  if (body?.user_id) return body.user_id;
+  if (body?.record_id) return body.record_id;
+  if (body?.ledger_id) return body.ledger_id;
   return req.params.id || null;
 }
 
 function extractNewValues(body) {
   if (!body || typeof body !== 'object') return null;
   if (body.id) return body;
-  const wrapped = Object.values(body).find(v => v && typeof v === 'object' && v.id);
-  return wrapped || null;
+  const wrapped = Object.values(body).find(v => v && typeof v === 'object' && (v.id || v.employee_id || v.user_id));
+  if (wrapped) return wrapped;
+  if (body.employee_id || body.user_id || body.ledger_id) return body;
+  return null;
 }
 
 function computeChangedFields(oldValues, newValues) {

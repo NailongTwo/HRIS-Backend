@@ -50,7 +50,7 @@ router.post('/:id/respond', auth, async (req, res) => {
       );
     }
 
-    res.json({ message: 'Survey submitted successfully!' });
+    res.json({ message: 'Survey submitted successfully!', record: { response_id: responseId, survey_id: req.params.id, employee_id } });
   } catch (err) {
     console.error('Survey submit error:', err.message);
     if (err.code === '23505') {

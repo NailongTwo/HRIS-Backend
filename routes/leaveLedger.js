@@ -98,14 +98,15 @@ router.post('/allocate', auth, authorize('leave_ledger', 'edit'), async (req, re
       [employee_id, leave_type_id, yr, credits]
     );
 
-    await client.query(
+    const ledgerRes = await client.query(
       `INSERT INTO leave_ledger (employee_id, leave_type_id, transaction_type, amount, balance_after, remarks, performed_by)
-       VALUES ($1, $2, 'Allocation', $3, $4, $5, $6)`,
+       VALUES ($1, $2, 'Allocation', $3, $4, $5, $6)
+       RETURNING *`,
       [employee_id, leave_type_id, credits, balanceAfter, reason || 'Manual allocation', performedBy]
     );
 
     await client.query('COMMIT');
-    res.json({ message: 'Credits allocated', balanceBefore, balanceAfter, credits });
+    res.json({ message: 'Credits allocated', balanceBefore, balanceAfter, credits, record: ledgerRes.rows[0] });
 
     const recipientId = await getUserIdByEmployee(employee_id);
     const lt = (await query('SELECT name FROM leave_types WHERE id = $1', [leave_type_id])).rows[0];
@@ -170,7 +171,7 @@ router.post('/allocate/bulk', auth, authorize('leave_ledger', 'edit'), async (re
         );
       }
       await client.query('COMMIT');
-      res.json({ message: `Allocated to ${empRes.rows.length} employees.`, allocated: empRes.rows.length });
+      res.json({ message: `Allocated to ${empRes.rows.length} employees.`, allocated: empRes.rows.length, record: { leave_type_id, credits, employees_allocated: empRes.rows.length } });
     } catch (err) {
       await client.query('ROLLBACK'); throw err;
     } finally { client.release(); }
@@ -204,14 +205,15 @@ router.post('/adjust', auth, authorize('leave_ledger', 'edit'), async (req, res)
       return res.status(404).json({ message: 'No credit record found. Allocate first.' });
     }
 
-    await client.query(
+    const ledgerRes = await client.query(
       `INSERT INTO leave_ledger (employee_id, leave_type_id, transaction_type, amount, balance_after, remarks, performed_by)
-       VALUES ($1, $2, 'Adjustment', $3, $4, $5, $6)`,
+       VALUES ($1, $2, 'Adjustment', $3, $4, $5, $6)
+       RETURNING *`,
       [employee_id, leave_type_id, amount, balanceAfter, remarks, performedBy]
     );
 
     await client.query('COMMIT');
-    res.json({ message: 'Adjustment applied', balanceBefore, balanceAfter, amount });
+    res.json({ message: 'Adjustment applied', balanceBefore, balanceAfter, amount, record: ledgerRes.rows[0] });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -235,14 +237,15 @@ router.post('/reset', auth, authorize('leave_ledger', 'edit'), async (req, res) 
       [employee_id, leave_type_id, yr]
     );
 
-    await client.query(
+    const ledgerRes = await client.query(
       `INSERT INTO leave_ledger (employee_id, leave_type_id, transaction_type, amount, balance_after, remarks, performed_by)
-       VALUES ($1, $2, 'Adjustment', $3, 0, $4, $5)`,
+       VALUES ($1, $2, 'Adjustment', $3, 0, $4, $5)
+       RETURNING *`,
       [employee_id, leave_type_id, -balanceBefore, remarks || 'Balance reset', performedBy]
     );
 
     await client.query('COMMIT');
-    res.json({ message: 'Balance reset', previousBalance: balanceBefore });
+    res.json({ message: 'Balance reset', previousBalance: balanceBefore, record: ledgerRes.rows[0] });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -296,7 +299,7 @@ router.post('/carry-over', auth, authorize('leave_ledger', 'edit'), async (req, 
     }
 
     await client.query('COMMIT');
-    res.json({ message: `Carry-over complete. ${count} records processed.`, processed: count });
+    res.json({ message: `Carry-over complete. ${count} records processed.`, processed: count, record: { from_year: fromYr, to_year: toYr, records_processed: count } });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ message: 'Server error', error: err.message });

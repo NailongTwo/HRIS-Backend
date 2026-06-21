@@ -155,7 +155,7 @@ router.put('/credits/allocate', auth, authorize('leave_credits', 'edit'), async 
     }
 
     await client.query('COMMIT');
-    res.json({ message: 'Leave credits allocated successfully' });
+    res.json({ message: 'Leave credits allocated successfully', record: { employee_id: req.body?.employee_id } });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -198,7 +198,7 @@ router.put('/credits/:employee_id', auth, authorize('leave_credits', 'edit'), as
     }
 
     await client.query('COMMIT');
-    res.json({ message: 'Leave credits updated successfully' });
+    res.json({ message: 'Leave credits updated successfully', record: { employee_id: req.body?.employee_id } });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -519,7 +519,7 @@ router.put('/credits', auth, authorize('leave_credits', 'edit'), async (req, res
     if (vl_total !== undefined && vl_used !== undefined) await updateCredit('VL', vl_total, vl_used);
     if (sl_total !== undefined && sl_used !== undefined) await updateCredit('SL', sl_total, sl_used);
     if (el_total !== undefined && el_used !== undefined) await updateCredit('EL', el_total, el_used);
-    res.json({ message: 'Leave credits updated successfully' });
+    res.json({ message: 'Leave credits updated successfully', record: { employee_id: req.params?.employee_id || req.body?.employee_id } });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
@@ -565,7 +565,7 @@ router.post('/credits/allocate', auth, authorize('leave_credits', 'edit'), async
         );
       }
     }
-    res.json({ message: 'Leave credits allocated to all active employees successfully!' });
+    res.json({ message: 'Leave credits allocated to all active employees successfully!', record: { employees_affected: employeesRes.rows.length } });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }

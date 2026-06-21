@@ -15,6 +15,13 @@ router.get('/', auth, authorize('audit_logs', 'view'), async (req, res) => {
     const queryParams = [];
     const conditions = [];
 
+    // Super Admin sees all logs; Admins see own logs + employee logs + system logs
+    if (req.user.role !== 'Super Admin') {
+      queryParams.push(req.user.id);
+      const ownIdx = queryParams.length;
+      conditions.push(`(al.user_id = $${ownIdx} OR al.user_id IN (SELECT id FROM users WHERE role = 'Employee') OR al.user_id IS NULL)`);
+    }
+
     if (action && action !== 'All Actions') {
       queryParams.push(action);
       conditions.push(`al.action = $${queryParams.length}`);
@@ -54,6 +61,7 @@ router.get('/', auth, authorize('audit_logs', 'view'), async (req, res) => {
 
     const dataResult = await pool.query(
       `SELECT al.id,
+              'AUD-' || al.id AS "refId",
               al.user_id AS "userId",
               al.employee_id AS "employeeId",
               COALESCE(e.first_name || ' ' || e.last_name, u.username) AS "user",
@@ -65,7 +73,7 @@ router.get('/', auth, authorize('audit_logs', 'view'), async (req, res) => {
               al.new_values,
               al.changed_fields,
               al.remarks,
-              TO_CHAR(al.created_at, 'Month DD, YYYY HH:MI AM') AS "performedAt",
+              TO_CHAR(al.created_at AT TIME ZONE 'Asia/Manila', 'Mon DD, YYYY HH:MI AM') AS "performedAt",
               al.created_at AS "createdAt"
        FROM audit_logs al
        LEFT JOIN users u ON u.id = al.user_id

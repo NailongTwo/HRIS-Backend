@@ -73,7 +73,7 @@ router.put('/:user_id/read-all', auth, async (req, res) => {
       WHERE recipient_id = $1 AND is_read = false`,
       [req.params.user_id]
     );
-    res.json({ message: 'All notifications marked as read!' });
+    res.json({ message: 'All notifications marked as read!', record: { user_id: req.params.user_id } });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }

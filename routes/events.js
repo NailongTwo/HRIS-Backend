@@ -164,7 +164,7 @@ router.delete('/:id', auth, authorize('events', 'delete'), async (req, res) => {
     if (!result.rows[0]) {
       return res.status(404).json({ message: 'Event not found' });
     }
-    res.json({ message: 'Event deleted successfully!' });
+    res.json({ message: 'Event deleted successfully!', record: result.rows[0] });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
@@ -205,7 +205,7 @@ router.delete('/types/:id', auth, authorize('event_types', 'delete'), async (req
       remarks: 'Event type disabled', req,
     });
 
-    res.json({ message: 'Event type disabled successfully!' });
+    res.json({ message: 'Event type disabled successfully!', record: result.rows[0] });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }

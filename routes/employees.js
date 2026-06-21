@@ -402,7 +402,7 @@ router.delete('/:id', auth, authorize('employees', 'delete'), async (req, res) =
     if (!result.rows[0]) {
       return res.status(404).json({ message: 'Employee not found' });
     }
-    res.json({ message: 'Employee deactivated successfully!' });
+    res.json({ message: 'Employee deactivated successfully!', record: result.rows[0] });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
@@ -467,7 +467,7 @@ router.put('/:id/government-ids', auth, async (req, res) => {
     }
 
     await client.query('COMMIT');
-    res.json({ message: 'Government IDs updated successfully!' });
+    res.json({ message: 'Government IDs updated successfully!', record: { employee_id: req.params.id } });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -510,7 +510,7 @@ router.post('/:id/avatar', auth, avatarUpload.single('file'), async (req, res) =
       [avatarUrl, id]
     );
 
-    res.json({ message: 'Profile picture updated successfully!', avatar_url: result.rows[0].avatar_url });
+    res.json({ message: 'Profile picture updated successfully!', record: { id: req.params.id, avatar_url: result.rows[0].avatar_url } });
   } catch (err) {
     if (err.message?.includes('Only JPG')) {
       return res.status(400).json({ message: err.message });

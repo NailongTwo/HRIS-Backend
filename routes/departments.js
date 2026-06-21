@@ -171,11 +171,11 @@ router.delete('/:id', auth, authorize('departments', 'delete'), async (req, res)
       return res.status(400).json({ message: 'Cannot archive department: It has active employees assigned to it.' });
     }
 
-    await pool.query(
-      'UPDATE departments SET is_active = false, updated_at = NOW() WHERE id = $1',
+    const result = await pool.query(
+      'UPDATE departments SET is_active = false, updated_at = NOW() WHERE id = $1 RETURNING *',
       [id]
     );
-    res.json({ message: 'Department archived successfully.' });
+    res.json({ message: 'Department archived successfully.', record: result.rows[0] });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }

@@ -314,7 +314,7 @@ router.delete('/:id', auth, authorize('work_schedules', 'delete'), async (req, r
       return res.status(404).json({ message: 'Work schedule not found' });
     }
 
-    res.json({ message: 'Work schedule deleted successfully.' });
+    res.json({ message: 'Work schedule deleted successfully.', record: result.rows[0] });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }

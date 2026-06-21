@@ -186,7 +186,7 @@ router.put('/:id/permissions', auth, authorize('role_permission', 'edit'), async
     ]);
 
     await client.query('COMMIT');
-    res.json({ message: 'Permissions saved successfully.' });
+    res.json({ message: 'Permissions saved successfully.', record: { role_id: req.params.id } });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -238,7 +238,7 @@ router.delete('/:id', auth, authorize('role_permission', 'delete'), async (req, 
     }
 
     await pool.query('DELETE FROM roles WHERE id = $1', [req.params.id]);
-    res.json({ message: 'Role deleted successfully!' });
+    res.json({ message: 'Role deleted successfully!', record: { id: req.params.id } });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }

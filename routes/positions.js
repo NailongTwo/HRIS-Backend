@@ -171,11 +171,11 @@ router.delete('/:id', auth, authorize('job_positions', 'delete'), async (req, re
       return res.status(400).json({ message: 'Cannot archive position: Active employees are currently assigned to it.' });
     }
 
-    await pool.query(
-      'UPDATE positions SET is_active = false, updated_at = NOW() WHERE id = $1',
+    const result = await pool.query(
+      'UPDATE positions SET is_active = false, updated_at = NOW() WHERE id = $1 RETURNING *',
       [id]
     );
-    res.json({ message: 'Position archived successfully.' });
+    res.json({ message: 'Position archived successfully.', record: result.rows[0] });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
