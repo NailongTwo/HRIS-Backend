@@ -23,7 +23,7 @@ async function sendEventReminders() {
        FROM events e
        JOIN event_types et ON e.event_type_id = et.id
        WHERE e.is_active = true
-         AND DATE(e.start_datetime) = CURRENT_DATE`
+         AND (e.start_datetime AT TIME ZONE 'Asia/Manila')::date = (NOW() AT TIME ZONE 'Asia/Manila')::date`
     );
 
     // ── 2. Get events happening TOMORROW ──
@@ -32,7 +32,7 @@ async function sendEventReminders() {
        FROM events e
        JOIN event_types et ON e.event_type_id = et.id
        WHERE e.is_active = true
-         AND DATE(e.start_datetime) = CURRENT_DATE + INTERVAL '1 day'`
+         AND (e.start_datetime AT TIME ZONE 'Asia/Manila')::date = (NOW() AT TIME ZONE 'Asia/Manila')::date + INTERVAL '1 day'`
     );
 
     if (todayEvents.rows.length === 0 && tomorrowEvents.rows.length === 0) {
