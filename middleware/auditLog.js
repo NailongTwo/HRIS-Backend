@@ -55,8 +55,8 @@ async function writeAuditLog({ req, action, tableName, recordId, oldValues, newV
 
     await pool.query(
       `INSERT INTO audit_logs
-       (user_id, employee_id, action, table_name, record_id, old_values, new_values, changed_fields, ip_address, user_agent)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+       (user_id, employee_id, action, table_name, record_id, old_values, new_values, changed_fields)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
         req.user?.id || null,
         req.user?.employee_id || null,
@@ -66,8 +66,6 @@ async function writeAuditLog({ req, action, tableName, recordId, oldValues, newV
         oldValues ? JSON.stringify(redact(oldValues)) : null,
         newValues ? JSON.stringify(redact(newValues)) : null,
         changedFields,
-        req.ip || null,
-        req.headers?.['user-agent'] || null,
       ]
     );
   } catch (err) {
