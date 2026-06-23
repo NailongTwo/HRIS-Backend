@@ -94,12 +94,14 @@ router.post('/pay-periods', auth, authorize('payroll_periods', 'create'), async 
     const month = start.getMonth() + 1;
     const period_type = 'Monthly'; // Always Monthly (not 1st/2nd Half)
 
+    const finalPaymentDate = payment_date && payment_date.trim() !== '' ? payment_date : null;
+    
     const result = await pool.query(
       `INSERT INTO pay_periods 
       (period_label, period_type, year, month, start_date, end_date, payment_date, is_finalized) 
       VALUES ($1, $2, $3, $4, $5, $6, $7, false) 
       RETURNING *`,
-      [period_label, period_type, year, month, start_date, end_date, payment_date]
+      [period_label, period_type, year, month, start_date, end_date, finalPaymentDate]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -134,9 +136,10 @@ router.put('/pay-periods/:id', auth, authorize('payroll_periods', 'edit'), async
       updateFields.push(`end_date = $${paramIdx++}`);
       params.push(end_date);
     }
-    if (payment_date) {
+    if (payment_date !== undefined && payment_date !== null) {
+      const finalPaymentDate = payment_date && payment_date.trim() !== '' ? payment_date : null;
       updateFields.push(`payment_date = $${paramIdx++}`);
-      params.push(payment_date);
+      params.push(finalPaymentDate);
     }
  
     // Add ID as last parameter
