@@ -229,9 +229,11 @@ router.post('/:id/acknowledge', auth, async (req, res) => {
       [employee_id, req.params.id, ip_address, user_agent]
     );
 
+    const docRes = await pool.query('SELECT file_name FROM employee_documents WHERE id = $1', [req.params.id]);
+    const docName = docRes.rows[0]?.file_name || `#${req.params.id}`;
     auditHelper.log({
       action: 'ACKNOWLEDGE', table_name: 'document_acknowledgements', record_id: result.rows[0]?.id,
-      remarks: `Document acknowledged by employee ${employee_id}`, req,
+      remarks: `Acknowledged document "${docName}"`, req,
     });
 
     res.json(result.rows[0]);

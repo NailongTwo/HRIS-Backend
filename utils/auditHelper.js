@@ -18,8 +18,11 @@ function sanitizeTable(tableName) {
   return tableName;
 }
 
-async function log({ action, table_name, record_id, old_values, new_values, changed_fields, remarks, req }) {
+async function log({ action, table_name, record_id, old_values, new_values, changed_fields, remarks, req, user_id, employee_id }) {
   req._auditHandled = true;
+
+  const uid = user_id || req?.user?.id || null;
+  const eid = employee_id || req?.user?.employee_id || null;
 
   if (!VALID_TABLES.includes(table_name)) {
     console.error(`[auditHelper] Invalid table_name: ${table_name}`);
@@ -32,8 +35,8 @@ async function log({ action, table_name, record_id, old_values, new_values, chan
        (user_id, employee_id, action, table_name, record_id, old_values, new_values, changed_fields, ip_address, user_agent, remarks)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
-        req?.user?.id || null,
-        req?.user?.employee_id || null,
+        uid,
+        eid,
         action,
         table_name,
         record_id || null,

@@ -69,6 +69,7 @@ router.post('/login', async (req, res) => {
 
     auditHelper.log({
       action: 'LOGIN', table_name: 'users', record_id: user.id,
+      user_id: user.id, employee_id,
       remarks: `Login successful as ${roleName}`, req,
     });
 
@@ -195,7 +196,7 @@ router.put('/change-password', auth, async (req, res) => {
 
     const hash = await bcrypt.hash(new_password, 10);
     await queryWithRetry('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.user.id]);
-    res.json({ message: 'Password changed successfully.', record: { id: req.user.id } });
+    res.json({ message: 'Password changed successfully.', record: { id: req.user.id, employee_no: req.user.employee_no } });
   } catch (err) {
     console.error('PUT /change-password error:', err.message);
     res.status(500).json({ message: 'Failed to change password.', error: err.message });
@@ -244,6 +245,7 @@ router.post('/forgot-password', async (req, res) => {
 
     auditHelper.log({
       action: 'UPDATE', table_name: 'users', record_id: userResult.rows[0].id,
+      user_id: userResult.rows[0].id,
       remarks: 'Password reset via forgot-password', req,
     });
 

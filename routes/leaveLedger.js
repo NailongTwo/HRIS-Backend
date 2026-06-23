@@ -106,7 +106,7 @@ router.post('/allocate', auth, authorize('leave_ledger', 'edit'), async (req, re
     );
 
     await client.query('COMMIT');
-    res.json({ message: 'Credits allocated', balanceBefore, balanceAfter, credits, record: ledgerRes.rows[0] });
+    res.json({ message: 'Credits allocated', balanceBefore, balanceAfter, credits, ledger_id: ledgerRes.rows[0].id, record: ledgerRes.rows[0] });
 
     const recipientId = await getUserIdByEmployee(employee_id);
     const lt = (await query('SELECT name FROM leave_types WHERE id = $1', [leave_type_id])).rows[0];
@@ -213,7 +213,7 @@ router.post('/adjust', auth, authorize('leave_ledger', 'edit'), async (req, res)
     );
 
     await client.query('COMMIT');
-    res.json({ message: 'Adjustment applied', balanceBefore, balanceAfter, amount, record: ledgerRes.rows[0] });
+    res.json({ message: 'Adjustment applied', balanceBefore, balanceAfter, amount, ledger_id: ledgerRes.rows[0].id, record: ledgerRes.rows[0] });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -245,7 +245,7 @@ router.post('/reset', auth, authorize('leave_ledger', 'edit'), async (req, res) 
     );
 
     await client.query('COMMIT');
-    res.json({ message: 'Balance reset', previousBalance: balanceBefore, record: ledgerRes.rows[0] });
+    res.json({ message: 'Balance reset', previousBalance: balanceBefore, ledger_id: ledgerRes.rows[0].id, record: ledgerRes.rows[0] });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ message: 'Server error', error: err.message });

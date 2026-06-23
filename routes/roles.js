@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const auditRoute = require('../middleware/auditRoute');
+const auditHelper = require('../utils/auditHelper');
 router.use(auditRoute('roles'));
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
@@ -186,6 +187,12 @@ router.put('/:id/permissions', auth, authorize('role_permission', 'edit'), async
     ]);
 
     await client.query('COMMIT');
+
+    auditHelper.log({
+      action: 'UPDATE', table_name: 'role_permissions', record_id: req.params.id,
+      remarks: 'Updated role permission matrix', req,
+    });
+
     res.json({ message: 'Permissions saved successfully.', record: { role_id: req.params.id } });
   } catch (err) {
     await client.query('ROLLBACK');

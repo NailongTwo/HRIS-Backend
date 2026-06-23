@@ -230,7 +230,8 @@ router.post('/', auth, authorize('employees', 'create'), async (req, res) => {
       message: 'Employee created successfully!',
       employee_id,
       user_id,
-      default_password: defaultPassword
+      default_password: defaultPassword,
+      record: { id: employee_id, name: `${first_name} ${last_name || ''}`.trim(), employee_no }
     });
 
   } catch (err) {
@@ -467,6 +468,13 @@ router.put('/:id/government-ids', auth, async (req, res) => {
     }
 
     await client.query('COMMIT');
+
+    const idTypeList = ids.map(i => i.id_type).filter(Boolean).join(', ');
+    auditHelper.log({
+      action: 'UPDATE', table_name: 'employee_government_ids', record_id: req.params.id,
+      remarks: `Updated employee government IDs (${idTypeList})`, req,
+    });
+
     res.json({ message: 'Government IDs updated successfully!', record: { employee_id: req.params.id } });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -509,6 +517,11 @@ router.post('/:id/avatar', auth, avatarUpload.single('file'), async (req, res) =
       `UPDATE employees SET avatar_url = $1, updated_at = NOW() WHERE id = $2 RETURNING avatar_url`,
       [avatarUrl, id]
     );
+
+    auditHelper.log({
+      action: 'UPDATE', table_name: 'employees', record_id: req.params.id,
+      remarks: 'Updated employee profile picture', req,
+    });
 
     res.json({ message: 'Profile picture updated successfully!', record: { id: req.params.id, avatar_url: result.rows[0].avatar_url } });
   } catch (err) {

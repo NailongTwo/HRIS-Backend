@@ -4,7 +4,7 @@ const pool = require('../config/db');
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
 
-// GET audit logs — with pagination, filters, full data
+// GET audit logs — with pagination, filters, full data 
 router.get('/', auth, authorize('audit_logs', 'view'), async (req, res) => {
   try {
     const {
@@ -64,7 +64,7 @@ router.get('/', auth, authorize('audit_logs', 'view'), async (req, res) => {
               'AUD-' || al.id AS "refId",
               al.user_id AS "userId",
               al.employee_id AS "employeeId",
-              COALESCE(e.first_name || ' ' || e.last_name, u.username) AS "user",
+               COALESCE(e.first_name || ' ' || e.last_name, u.username, u.email, 'System') AS "user",
               al.action,
                al.table_name AS "table",
                al.record_id AS "recordId",
