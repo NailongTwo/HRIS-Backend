@@ -116,8 +116,13 @@ router.post('/pay-periods', auth, authorize('payroll_periods', 'create'), async 
 
     if (overlapCheck.rows.length > 0) {
       const overlap = overlapCheck.rows[0];
+      const fmtDate = (d) => {
+        if (!d) return '';
+        if (d instanceof Date) return d.toISOString().split('T')[0];
+        return String(d).split('T')[0]; // already a string like '2026-05-15' or '2026-05-15T00:00:00.000Z'
+      };
       return res.status(400).json({ 
-        message: `Date range overlaps with existing period "${overlap.period_label}" (${overlap.start_date.toISOString().split('T')[0]} to ${overlap.end_date.toISOString().split('T')[0]})` 
+        message: `Date range overlaps with existing period "${overlap.period_label}" (${fmtDate(overlap.start_date)} to ${fmtDate(overlap.end_date)})` 
       });
     }
     const result = await pool.query(
