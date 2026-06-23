@@ -147,6 +147,53 @@ router.put('/pay-periods/:id', auth, authorize('payroll_periods', 'edit'), async
     if (!period_label && !start_date && !end_date && !payment_date) {
       return res.status(400).json({ message: 'At least one field is required to update.' });
     }
+
+    // Fetch the current row so we know the effective start/end if only one was sent
+    const currentRes = await pool.query(
+      `SELECT start_date, end_date FROM pay_periods WHERE id = $1`,
+      [req.params.id]
+    );
+    if (!currentRes.rows[0]) {
+      return res.status(404).json({ message: 'Pay period not found.' });
+    }
+
+    const fmtDate = (d) => {
+      if (!d) return '';
+      if (d instanceof Date) return d.toISOString().split('T')[0];
+      return String(d).split('T')[0];
+    };
+
+    const effectiveStart = start_date || fmtDate(currentRes.rows[0].start_date);
+    const effectiveEnd = end_date || fmtDate(currentRes.rows[0].end_date);
+
+    // Validate date logic if either date is being changed
+    if (start_date || end_date) {
+      if (new Date(effectiveStart) >= new Date(effectiveEnd)) {
+        return res.status(400).json({ 
+          message: 'Period start date must be before end date.' 
+        });
+      }
+
+      // Check for overlapping periods, excluding this period itself
+      const overlapCheck = await pool.query(
+        `SELECT id, period_label, start_date, end_date 
+         FROM pay_periods
+         WHERE id != $3
+           AND (
+             (start_date <= $1 AND end_date >= $1) OR
+             (start_date <= $2 AND end_date >= $2) OR
+             (start_date >= $1 AND end_date <= $2)
+           )`,
+        [effectiveStart, effectiveEnd, req.params.id]
+      );
+
+      if (overlapCheck.rows.length > 0) {
+        const overlap = overlapCheck.rows[0];
+        return res.status(400).json({ 
+          message: `Date range overlaps with existing period "${overlap.period_label}" (${fmtDate(overlap.start_date)} to ${fmtDate(overlap.end_date)})` 
+        });
+      }
+    }
  
     // Build dynamic UPDATE query
     const updateFields = [];
