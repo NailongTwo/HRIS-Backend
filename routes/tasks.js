@@ -1,10 +1,11 @@
 const express = require('express');
 const router = express.Router();
+const auditRoute = require('../middleware/auditRoute');
+router.use(auditRoute('tasks'));
 const pool = require('../config/db');
 const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
-
 // GET all tasks
 router.get('/', auth, authorize('tasks', 'view'), async (req, res) => {
   try {
@@ -89,9 +90,9 @@ router.put('/:id', auth, authorize('tasks', 'edit'), async (req, res) => {
 // DELETE task
 router.delete('/:id', auth, authorize('tasks', 'delete'), async (req, res) => {
   try {
-    const result = await query('DELETE FROM tasks WHERE id = $1 RETURNING id', [req.params.id]);
+    const result = await query('DELETE FROM tasks WHERE id = $1 RETURNING *', [req.params.id]);
     if (!result.rows[0]) return res.status(404).json({ message: 'Task not found!' });
-    res.json({ message: 'Task deleted!' });
+    res.json({ message: 'Task deleted!', record: result.rows[0] });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
@@ -125,3 +126,5 @@ router.post('/:id/comments', auth, async (req, res) => {
 });
 
 module.exports = router;
+
+

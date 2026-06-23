@@ -1,8 +1,9 @@
 const express = require('express');
 const router = express.Router();
+const auditRoute = require('../middleware/auditRoute');
+router.use(auditRoute('notifications'));
 const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
-
 // GET all notifications for the authenticated user
 router.get('/', auth, async (req, res) => {
   try {
@@ -72,7 +73,7 @@ router.put('/:user_id/read-all', auth, async (req, res) => {
       WHERE recipient_id = $1 AND is_read = false`,
       [req.params.user_id]
     );
-    res.json({ message: 'All notifications marked as read!' });
+    res.json({ message: 'All notifications marked as read!', record: { user_id: req.params.user_id } });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
@@ -121,3 +122,5 @@ router.put('/:id/archive', auth, async (req, res) => {
 });
 
 module.exports = router;
+
+

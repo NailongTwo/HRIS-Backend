@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
+const auditRoute = require('../middleware/auditRoute');
+router.use(auditRoute('surveys'));
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
-
 // GET all active surveys with questions, and whether employee has responded
 router.get('/employee/:id', auth, async (req, res) => {
   try {
@@ -49,7 +50,7 @@ router.post('/:id/respond', auth, async (req, res) => {
       );
     }
 
-    res.json({ message: 'Survey submitted successfully!' });
+    res.json({ message: 'Survey submitted successfully!', record: { response_id: responseId, survey_id: req.params.id, employee_id } });
   } catch (err) {
     console.error('Survey submit error:', err.message);
     if (err.code === '23505') {
@@ -130,3 +131,5 @@ router.get('/:id/responses', auth, authorize('surveys', 'view'), async (req, res
 });
 
 module.exports = router;
+
+

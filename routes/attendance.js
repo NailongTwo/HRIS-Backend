@@ -1,10 +1,11 @@
 const express = require('express');
 const router = express.Router();
+const auditRoute = require('../middleware/auditRoute');
+router.use(auditRoute('attendance_logs'));
 const pool = require('../config/db');
 const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
-
 // Helper to check if a holiday exists on a date
 async function checkHolidayOnDate(dateStr) {
   try {
@@ -378,7 +379,6 @@ async function syncEmployeeAttendance(employeeId) {
     console.error(`[syncEmployeeAttendance] Error for employee ${employeeId}:`, err.message);
   }
 }
-
 
 // GET all attendance logs
 router.get('/', auth, authorize('attendance', 'view'), async (req, res) => {
@@ -911,3 +911,6 @@ router.put('/:id/adjust', auth, authorize('attendance', 'edit'), async (req, res
 });
 
 module.exports = router;
+
+
+

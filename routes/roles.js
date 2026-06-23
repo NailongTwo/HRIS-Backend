@@ -1,9 +1,11 @@
 const express = require('express');
 const router = express.Router();
+const auditRoute = require('../middleware/auditRoute');
+const auditHelper = require('../utils/auditHelper');
+router.use(auditRoute('roles'));
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
-
 // 0. GET roles as lightweight list (id + name only) — for dropdowns, any authenticated user
 router.get('/simple', auth, async (req, res) => {
   try {
@@ -185,7 +187,13 @@ router.put('/:id/permissions', auth, authorize('role_permission', 'edit'), async
     ]);
 
     await client.query('COMMIT');
-    res.json({ message: 'Permissions saved successfully.' });
+
+    auditHelper.log({
+      action: 'UPDATE', table_name: 'role_permissions', record_id: req.params.id,
+      remarks: 'Updated role permission matrix', req,
+    });
+
+    res.json({ message: 'Permissions saved successfully.', record: { role_id: req.params.id } });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -237,10 +245,13 @@ router.delete('/:id', auth, authorize('role_permission', 'delete'), async (req, 
     }
 
     await pool.query('DELETE FROM roles WHERE id = $1', [req.params.id]);
-    res.json({ message: 'Role deleted successfully!' });
+    res.json({ message: 'Role deleted successfully!', record: { id: req.params.id } });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
 module.exports = router;
+
+
+

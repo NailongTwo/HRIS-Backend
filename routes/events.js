@@ -4,6 +4,10 @@ const pool = require('../config/db');
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
 const sendEventReminders = require('../cron/eventReminders');
+const auditRoute = require('../middleware/auditRoute');
+const auditHelper = require('../utils/auditHelper');
+
+router.use(auditRoute('events'));
 
 // GET all events
 router.get('/', auth, authorize('events', 'view'), async (req, res) => {
@@ -160,7 +164,7 @@ router.delete('/:id', auth, authorize('events', 'delete'), async (req, res) => {
     if (!result.rows[0]) {
       return res.status(404).json({ message: 'Event not found' });
     }
-    res.json({ message: 'Event deleted successfully!' });
+    res.json({ message: 'Event deleted successfully!', record: result.rows[0] });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
@@ -195,7 +199,13 @@ router.delete('/types/:id', auth, authorize('event_types', 'delete'), async (req
     if (!result.rows[0]) {
       return res.status(404).json({ message: 'Event type not found' });
     }
-    res.json({ message: 'Event type disabled successfully!' });
+
+    auditHelper.log({
+      action: 'DELETE', table_name: 'event_types', record_id: req.params.id,
+      remarks: 'Event type disabled', req,
+    });
+
+    res.json({ message: 'Event type disabled successfully!', record: result.rows[0] });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }

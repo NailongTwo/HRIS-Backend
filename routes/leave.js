@@ -4,6 +4,10 @@ const pool = require('../config/db');
 const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
+const auditRoute = require('../middleware/auditRoute');
+const auditHelper = require('../utils/auditHelper');
+
+router.use(auditRoute('leave_requests'));
 
 // ── Helper: silent fire-and-forget notification insert ────────────────────────
 async function notify({ recipientId, type, title, message, entityType, entityId }) {
@@ -151,7 +155,7 @@ router.put('/credits/allocate', auth, authorize('leave_credits', 'edit'), async 
     }
 
     await client.query('COMMIT');
-    res.json({ message: 'Leave credits allocated successfully' });
+    res.json({ message: 'Leave credits allocated successfully', record: { employee_id: req.body?.employee_id } });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -194,7 +198,7 @@ router.put('/credits/:employee_id', auth, authorize('leave_credits', 'edit'), as
     }
 
     await client.query('COMMIT');
-    res.json({ message: 'Leave credits updated successfully' });
+    res.json({ message: 'Leave credits updated successfully', record: { employee_id: req.body?.employee_id } });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -405,6 +409,15 @@ router.put('/:id/status', auth, authorize('leave_requests', 'edit'), async (req,
     }
 
     await client.query('COMMIT');
+
+    auditHelper.log({
+      action: status === 'Approved' ? 'APPROVE' : 'REJECT',
+      table_name: 'leave_requests',
+      record_id: lr.id,
+      remarks: `Leave request ${status}: ${lr.reference_no}${approval_remarks ? ' - ' + approval_remarks : ''}`,
+      req,
+    });
+
     res.json(lr);
 
     // ── Fire-and-forget notification ──
@@ -441,6 +454,12 @@ router.put('/:id/cancel', auth, async (req, res) => {
     if (!result.rows[0]) {
       return res.status(404).json({ message: 'Leave request not found or already processed!' });
     }
+
+    auditHelper.log({
+      action: 'UPDATE', table_name: 'leave_requests', record_id: req.params.id,
+      remarks: `Leave request cancelled: ${result.rows[0].reference_no || ''}`, req,
+    });
+
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Cancel error:', err.message);
@@ -500,7 +519,7 @@ router.put('/credits', auth, authorize('leave_credits', 'edit'), async (req, res
     if (vl_total !== undefined && vl_used !== undefined) await updateCredit('VL', vl_total, vl_used);
     if (sl_total !== undefined && sl_used !== undefined) await updateCredit('SL', sl_total, sl_used);
     if (el_total !== undefined && el_used !== undefined) await updateCredit('EL', el_total, el_used);
-    res.json({ message: 'Leave credits updated successfully' });
+    res.json({ message: 'Leave credits updated successfully', record: { employee_id: req.params?.employee_id || req.body?.employee_id } });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
@@ -546,7 +565,7 @@ router.post('/credits/allocate', auth, authorize('leave_credits', 'edit'), async
         );
       }
     }
-    res.json({ message: 'Leave credits allocated to all active employees successfully!' });
+    res.json({ message: 'Leave credits allocated to all active employees successfully!', record: { employees_affected: employeesRes.rows.length } });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }

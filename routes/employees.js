@@ -7,6 +7,10 @@ const authorize = require('../middleware/authorize');
 const bcrypt = require('bcryptjs');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
+const auditRoute = require('../middleware/auditRoute');
+const auditHelper = require('../utils/auditHelper');
+
+router.use(auditRoute('employees'));
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -151,11 +155,12 @@ router.post('/', auth, authorize('employees', 'create'), async (req, res) => {
     }
 
     // 2. Generate next employee number atomically within this transaction
+    // Lock the table to prevent race conditions during sequence generation
+    await client.query('LOCK TABLE employees IN EXCLUSIVE MODE');
     const seqRes = await client.query(`
       SELECT COALESCE(MAX(CAST(SPLIT_PART(employee_no, '-', 2) AS INTEGER)), 0) AS max_seq
       FROM employees
       WHERE employee_no LIKE 'HS-%'
-      FOR UPDATE
     `);
     const nextSeq = (seqRes.rows[0].max_seq || 0) + 1;
     const employee_no = `HS-${String(nextSeq).padStart(3, '0')}`;
@@ -225,7 +230,8 @@ router.post('/', auth, authorize('employees', 'create'), async (req, res) => {
       message: 'Employee created successfully!',
       employee_id,
       user_id,
-      default_password: defaultPassword
+      default_password: defaultPassword,
+      record: { id: employee_id, name: `${first_name} ${last_name || ''}`.trim(), employee_no }
     });
 
   } catch (err) {
@@ -372,6 +378,11 @@ router.put('/:id/reset-password', auth, authorize('employees', 'edit'), async (r
       [password_hash, user_id]
     );
 
+    auditHelper.log({
+      action: 'UPDATE', table_name: 'users', record_id: user_id,
+      remarks: `Admin reset password for ${first_name} ${employee_no.slice(-4)}`, req,
+    });
+
     res.json({
       message: 'Password reset successfully!',
       default_password: defaultPassword
@@ -392,7 +403,7 @@ router.delete('/:id', auth, authorize('employees', 'delete'), async (req, res) =
     if (!result.rows[0]) {
       return res.status(404).json({ message: 'Employee not found' });
     }
-    res.json({ message: 'Employee deactivated successfully!' });
+    res.json({ message: 'Employee deactivated successfully!', record: result.rows[0] });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
@@ -457,7 +468,14 @@ router.put('/:id/government-ids', auth, async (req, res) => {
     }
 
     await client.query('COMMIT');
-    res.json({ message: 'Government IDs updated successfully!' });
+
+    const idTypeList = ids.map(i => i.id_type).filter(Boolean).join(', ');
+    auditHelper.log({
+      action: 'UPDATE', table_name: 'employee_government_ids', record_id: req.params.id,
+      remarks: `Updated employee government IDs (${idTypeList})`, req,
+    });
+
+    res.json({ message: 'Government IDs updated successfully!', record: { employee_id: req.params.id } });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -500,7 +518,12 @@ router.post('/:id/avatar', auth, avatarUpload.single('file'), async (req, res) =
       [avatarUrl, id]
     );
 
-    res.json({ message: 'Profile picture updated successfully!', avatar_url: result.rows[0].avatar_url });
+    auditHelper.log({
+      action: 'UPDATE', table_name: 'employees', record_id: req.params.id,
+      remarks: 'Updated employee profile picture', req,
+    });
+
+    res.json({ message: 'Profile picture updated successfully!', record: { id: req.params.id, avatar_url: result.rows[0].avatar_url } });
   } catch (err) {
     if (err.message?.includes('Only JPG')) {
       return res.status(400).json({ message: err.message });

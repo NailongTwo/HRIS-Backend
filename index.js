@@ -13,6 +13,10 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Audit logging middleware — intercepts all mutation responses
+const auditLog = require('./middleware/auditLog');
+app.use('/api', auditLog);
+
 // Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/employees', require('./routes/employees'));

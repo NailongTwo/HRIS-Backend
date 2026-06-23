@@ -4,74 +4,93 @@ const pool = require('../config/db');
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
 
-// GET audit logs
+// GET audit logs — with pagination, filters, full data 
 router.get('/', auth, authorize('audit_logs', 'view'), async (req, res) => {
   try {
-    const { action, table } = req.query;
-    
-    let queryText = `
-      SELECT al.id, 
-             COALESCE(e.first_name || ' ' || e.last_name, u.username) AS user,
-             al.action, 
-             al.table_name AS table,
-             al.record_id AS "recordId", 
-             al.ip_address::text AS ip,
-             TO_CHAR(al.created_at, 'Month DD, YYYY HH:MI AM') AS "performedAt",
-             al.remarks
-      FROM audit_logs al
-      LEFT JOIN users u ON u.id = al.user_id
-      LEFT JOIN employees e ON e.user_id = al.user_id
-    `;
-    
+    const {
+      action, table, userId, dateFrom, dateTo,
+      page = 1, limit = 50,
+    } = req.query;
+
     const queryParams = [];
     const conditions = [];
-    
+
+    // Super Admin sees all logs; Admins see own logs + employee logs + system logs
+    if (req.user.role !== 'Super Admin') {
+      queryParams.push(req.user.id);
+      const ownIdx = queryParams.length;
+      conditions.push(`(al.user_id = $${ownIdx} OR al.user_id IN (SELECT id FROM users WHERE role = 'Employee') OR al.user_id IS NULL)`);
+    }
+
     if (action && action !== 'All Actions') {
       queryParams.push(action);
       conditions.push(`al.action = $${queryParams.length}`);
     }
-    
+
     if (table && table !== 'All Tables') {
       queryParams.push(table);
       conditions.push(`al.table_name = $${queryParams.length}`);
     }
-    
-    if (conditions.length > 0) {
-      queryText += ' WHERE ' + conditions.join(' AND ');
+
+    if (userId) {
+      queryParams.push(userId);
+      conditions.push(`al.user_id = $${queryParams.length}`);
     }
-    
-    queryText += ' ORDER BY al.created_at DESC LIMIT 100';
-    
-    const result = await pool.query(queryText, queryParams);
-    
-    // Clean up performedAt formatting to match "March 2, 2026 5:38 PM"
-    const cleaned = result.rows.map(row => {
+
+    if (dateFrom) {
+      queryParams.push(dateFrom);
+      conditions.push(`al.created_at >= $${queryParams.length}::timestamptz`);
+    }
+
+    if (dateTo) {
+      queryParams.push(dateTo + 'T23:59:59Z');
+      conditions.push(`al.created_at <= $${queryParams.length}::timestamptz`);
+    }
+
+    const whereClause = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*) FROM audit_logs al${whereClause}`,
+      queryParams
+    );
+    const total = parseInt(countResult.rows[0].count, 10);
+
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+    const offset = (pageNum - 1) * limitNum;
+
+    const dataResult = await pool.query(
+      `SELECT al.id,
+              'AUD-' || al.id AS "refId",
+              al.user_id AS "userId",
+              al.employee_id AS "employeeId",
+               COALESCE(e.first_name || ' ' || e.last_name, u.username, u.email, 'System') AS "user",
+              al.action,
+               al.table_name AS "table",
+               al.record_id AS "recordId",
+               al.old_values,
+              al.new_values,
+              al.changed_fields,
+              al.remarks,
+              TO_CHAR(al.created_at AT TIME ZONE 'Asia/Manila', 'Mon DD, YYYY HH:MI AM') AS "performedAt",
+              al.created_at AS "createdAt"
+       FROM audit_logs al
+       LEFT JOIN users u ON u.id = al.user_id
+       LEFT JOIN employees e ON e.user_id = al.user_id
+       ${whereClause}
+       ORDER BY al.created_at DESC
+       LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`,
+      [...queryParams, limitNum, offset]
+    );
+
+    const cleaned = dataResult.rows.map(row => {
       if (row.performedAt) {
-        // Trim double spaces and fix month capitalization/spacing if any
         row.performedAt = row.performedAt.replace(/\s+/g, ' ').trim();
       }
       return row;
     });
-    
-    res.json(cleaned);
-  } catch (err) {
-    res.status(500).json({ message: 'Server error', error: err.message });
-  }
-});
 
-// Helper to create an audit log from other routes
-router.post('/', auth, authorize('audit_logs', 'create'), async (req, res) => {
-  const { action, table_name, record_id, remarks, ip_address } = req.body;
-  const userId = req.user.id;
-  
-  try {
-    const result = await pool.query(
-      `INSERT INTO audit_logs (user_id, action, table_name, record_id, remarks, ip_address)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING *`,
-      [userId, action, table_name, record_id, remarks, ip_address || req.ip]
-    );
-    res.status(201).json(result.rows[0]);
+    res.json({ logs: cleaned, total, page: pageNum, limit: limitNum });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }

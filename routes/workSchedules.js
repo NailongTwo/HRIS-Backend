@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
+const auditRoute = require('../middleware/auditRoute');
+router.use(auditRoute('work_schedules'));
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
-
 // GET all work schedules (with employee count and days array)
 router.get('/', auth, authorize('work_schedules', 'view'), async (req, res) => {
   try {
@@ -313,10 +314,13 @@ router.delete('/:id', auth, authorize('work_schedules', 'delete'), async (req, r
       return res.status(404).json({ message: 'Work schedule not found' });
     }
 
-    res.json({ message: 'Work schedule deleted successfully.' });
+    res.json({ message: 'Work schedule deleted successfully.', record: result.rows[0] });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
 module.exports = router;
+
+
+

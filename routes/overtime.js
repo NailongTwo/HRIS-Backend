@@ -4,6 +4,10 @@ const pool = require('../config/db');
 const query = require('../config/queryWithRetry');
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
+const auditRoute = require('../middleware/auditRoute');
+const auditHelper = require('../utils/auditHelper');
+
+router.use(auditRoute('overtime_requests'));
 
 // ─── Helper: fire-and-forget notification insert ──────────────────────────────
 // Silently fails so a notification error never breaks the main response.
@@ -169,6 +173,15 @@ router.put('/:id/status', auth, authorize('overtime_requests', 'edit'), async (r
     }
 
     const ot = result.rows[0];
+
+    auditHelper.log({
+      action: status === 'Approved' ? 'APPROVE' : 'REJECT',
+      table_name: 'overtime_requests',
+      record_id: ot.id,
+      remarks: `Overtime request ${status}: ${ot.reference_no || ''}${approval_remarks ? ' - ' + approval_remarks : ''}`,
+      req,
+    });
+
     res.json(ot);
 
     // ── Fire-and-forget notification to the employee ──
@@ -204,6 +217,11 @@ router.put('/:id/cancel', auth, async (req, res) => {
     if (!result.rows[0]) {
       return res.status(404).json({ message: 'Overtime request not found!' });
     }
+
+    auditHelper.log({
+      action: 'UPDATE', table_name: 'overtime_requests', record_id: req.params.id,
+      remarks: `Overtime request cancelled${cancelled_reason ? ': ' + cancelled_reason : ''}`, req,
+    });
 
     res.json(result.rows[0]);
   } catch (err) {
