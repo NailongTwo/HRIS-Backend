@@ -29,19 +29,18 @@ router.get('/employee/:id', auth, async (req, res) => {
   }
 });
 
-// CREATE task
-router.post('/', auth, authorize('tasks', 'create'), async (req, res) => {
-  const { title, description, assignee_ids, assigned_by, priority, due_date, start_date, project, tags } = req.body;
+// CREATE task (self-logged by employee)
+router.post('/', auth, async (req, res) => {
+  const { title, description, assignee_ids, task_date, project, attachment_urls } = req.body;
   try {
     const safeAssigneeIds = Array.isArray(assignee_ids) && assignee_ids.length > 0 ? assignee_ids : [];
     const primaryAssignee = safeAssigneeIds[0] || null;
     const result = await query(
       `INSERT INTO tasks 
-      (title, description, assignee_id, assignee_ids, assigned_by, status, priority, 
-      due_date, start_date, project, tags) 
-      VALUES ($1, $2, $3, $4, $5, 'To Do', $6, $7, $8, $9, $10) 
+      (title, description, assignee_id, assignee_ids, status, task_date, project, attachment_urls) 
+      VALUES ($1, $2, $3, $4, 'To Do', $5, $6, $7) 
       RETURNING *`,
-      [title, description, primaryAssignee, safeAssigneeIds, assigned_by, priority || 'Medium', due_date, start_date, project, tags]
+      [title, description, primaryAssignee, safeAssigneeIds, task_date || new Date().toISOString().slice(0, 10), project, attachment_urls || []]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -65,22 +64,23 @@ router.put('/:id/status', auth, async (req, res) => {
   }
 });
 
-// UPDATE task
-router.put('/:id', auth, authorize('tasks', 'edit'), async (req, res) => {
-  const { title, description, assignee_ids, priority, due_date, project, tags } = req.body;
+// UPDATE task (employee self-edit; locked once Done)
+router.put('/:id', auth, async (req, res) => {
+  const { title, description, task_date, project, attachment_urls } = req.body;
   try {
-    const safeAssigneeIds = Array.isArray(assignee_ids) && assignee_ids.length > 0 ? assignee_ids : [];
-    const primaryAssignee = safeAssigneeIds[0] || null;
+    const existing = await query('SELECT status FROM tasks WHERE id = $1', [req.params.id]);
+    if (!existing.rows[0]) return res.status(404).json({ message: 'Task not found!' });
+    if (existing.rows[0].status === 'Done') {
+      return res.status(403).json({ message: 'This task is already marked as Done and can no longer be edited.' });
+    }
+
     const result = await query(
       `UPDATE tasks 
-      SET title = $1, description = $2, priority = $3, 
-      due_date = $4, project = $5, tags = $6,
-      assignee_id = $7, assignee_ids = $8
-      WHERE id = $9 
+      SET title = $1, description = $2, task_date = $3, project = $4, attachment_urls = $5, updated_at = NOW()
+      WHERE id = $6 
       RETURNING *`,
-      [title, description, priority, due_date, project, tags, primaryAssignee, safeAssigneeIds, req.params.id]
+      [title, description, task_date, project, attachment_urls, req.params.id]
     );
-    if (!result.rows[0]) return res.status(404).json({ message: 'Task not found!' });
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -120,6 +120,60 @@ router.post('/:id/comments', auth, async (req, res) => {
       [req.params.id, author_id, body]
     );
     res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+// UPLOAD task attachment to Supabase, append to attachment_urls
+const multer = require('multer');
+const { createClient } = require('@supabase/supabase-js');
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+const taskFileUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
+
+router.post('/:id/attachment', auth, taskFileUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: 'No file uploaded.' });
+
+    const existing = await query('SELECT status, attachment_urls FROM tasks WHERE id = $1', [req.params.id]);
+    if (!existing.rows[0]) return res.status(404).json({ message: 'Task not found!' });
+    if (existing.rows[0].status === 'Done') {
+      return res.status(403).json({ message: 'This task is already marked as Done and can no longer be edited.' });
+    }
+
+    const filePath = `task-attachments/task_${req.params.id}_${Date.now()}_${req.file.originalname}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('hris-files')
+      .upload(filePath, req.file.buffer, {
+        contentType: req.file.mimetype,
+        upsert: true,
+      });
+
+    if (uploadError) {
+      return res.status(500).json({ message: 'Cloud storage upload failed.', error: uploadError.message });
+    }
+
+    const { data: urlData } = supabase.storage.from('hris-files').getPublicUrl(filePath);
+    const fileUrl = urlData.publicUrl;
+
+    const currentUrls = existing.rows[0].attachment_urls || [];
+    const updatedUrls = [...currentUrls, fileUrl];
+
+    const result = await query(
+      `UPDATE tasks SET attachment_urls = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+      [updatedUrls, req.params.id]
+    );
+
+    res.json({ message: 'File uploaded successfully!', attachment_urls: result.rows[0].attachment_urls });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
