@@ -95,7 +95,31 @@ router.post('/pay-periods', auth, authorize('payroll_periods', 'create'), async 
     const period_type = 'Monthly'; // Always Monthly (not 1st/2nd Half)
 
     const finalPaymentDate = payment_date && payment_date.trim() !== '' ? payment_date : null;
-    
+    // Validate date logic
+    if (new Date(start_date) >= new Date(end_date)) {
+      return res.status(400).json({ 
+        message: 'Period start date must be before end date.' 
+      });
+    }
+
+    // Check for overlapping periods
+    const overlapCheck = await pool.query(
+      `SELECT id, period_label, start_date, end_date 
+       FROM pay_periods
+       WHERE (
+         (start_date <= $1 AND end_date >= $1) OR
+         (start_date <= $2 AND end_date >= $2) OR
+         (start_date >= $1 AND end_date <= $2)
+       )`,
+      [start_date, end_date]
+    );
+
+    if (overlapCheck.rows.length > 0) {
+      const overlap = overlapCheck.rows[0];
+      return res.status(400).json({ 
+        message: `Date range overlaps with existing period "${overlap.period_label}" (${overlap.start_date.toISOString().split('T')[0]} to ${overlap.end_date.toISOString().split('T')[0]})` 
+      });
+    }
     const result = await pool.query(
       `INSERT INTO pay_periods 
       (period_label, period_type, year, month, start_date, end_date, payment_date, is_finalized) 
