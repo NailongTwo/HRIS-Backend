@@ -108,23 +108,91 @@ router.post('/pay-periods', auth, authorize('payroll_periods', 'create'), async 
 });
 
 // FINALIZE/RELEASE pay period
-router.put('/pay-periods/:id/finalize', auth, authorize('payroll_periods', 'edit'), async (req, res) => {
+router.put('/pay-periods/:id', auth, authorize('payroll_periods', 'edit'), async (req, res) => {
+  const { period_label, start_date, end_date, payment_date } = req.body;
+  
   try {
+    // Validate that at least one field is being updated
+    if (!period_label && !start_date && !end_date && !payment_date) {
+      return res.status(400).json({ message: 'At least one field is required to update.' });
+    }
+ 
+    // Build dynamic UPDATE query
+    const updateFields = [];
+    const params = [];
+    let paramIdx = 1;
+ 
+    if (period_label) {
+      updateFields.push(`period_label = $${paramIdx++}`);
+      params.push(period_label);
+    }
+    if (start_date) {
+      updateFields.push(`start_date = $${paramIdx++}`);
+      params.push(start_date);
+    }
+    if (end_date) {
+      updateFields.push(`end_date = $${paramIdx++}`);
+      params.push(end_date);
+    }
+    if (payment_date) {
+      updateFields.push(`payment_date = $${paramIdx++}`);
+      params.push(payment_date);
+    }
+ 
+    // Add ID as last parameter
+    params.push(req.params.id);
+    const idIdx = paramIdx;
+ 
     const result = await pool.query(
       `UPDATE pay_periods 
-      SET is_finalized = true 
-      WHERE id = $1 
-      RETURNING *`,
-      [req.params.id]
+       SET ${updateFields.join(', ')}
+       WHERE id = $${idIdx}
+       RETURNING *`,
+      params
     );
+ 
     if (!result.rows[0]) {
-      return res.status(404).json({ message: 'Pay period not found' });
+      return res.status(404).json({ message: 'Pay period not found.' });
     }
+ 
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
+
+// DELETE pay period (only if no payslips attached)
+router.delete('/pay-periods/:id', auth, authorize('payroll_periods', 'delete'), async (req, res) => {
+  try {
+    // Check if any payslips exist for this period
+    const payslipCheck = await pool.query(
+      `SELECT COUNT(*) as count FROM payslips WHERE pay_period_id = $1`,
+      [req.params.id]
+    );
+ 
+    if (payslipCheck.rows[0].count > 0) {
+      return res.status(400).json({ 
+        message: `Cannot delete pay period with ${payslipCheck.rows[0].count} payslip(s). Delete or reassign payslips first.` 
+      });
+    }
+ 
+    // Safe to delete
+    const result = await pool.query(
+      `DELETE FROM pay_periods WHERE id = $1 RETURNING *`,
+      [req.params.id]
+    );
+ 
+    if (!result.rows[0]) {
+      return res.status(404).json({ message: 'Pay period not found.' });
+    }
+ 
+    res.json({ message: 'Pay period deleted successfully!', deleted: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+
 
 // DOWNLOAD payslip as PDF — returns stored pdf_url or structured data
 router.get('/:id/download', auth, async (req, res) => {
