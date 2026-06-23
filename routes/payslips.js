@@ -92,7 +92,7 @@ router.post('/pay-periods', auth, authorize('payroll_periods', 'create'), async 
     const start = new Date(start_date);
     const year = start.getFullYear();
     const month = start.getMonth() + 1;
-    const period_type = start.getDate() <= 15 ? '1st Half' : '2nd Half';
+    const period_type = 'Monthly'; // Always Monthly (not 1st/2nd Half)
 
     const result = await pool.query(
       `INSERT INTO pay_periods 
