@@ -6,6 +6,24 @@ const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
 const auditRoute = require('../middleware/auditRoute');
 const auditHelper = require('../utils/auditHelper');
+const multer = require('multer');
+const { createClient } = require('@supabase/supabase-js');
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'];
+    if (allowed.includes(file.mimetype)) cb(null, true);
+    else cb(new Error('Only PDF, JPG, and PNG files are allowed.'));
+  }
+});
 
 router.use(auditRoute('leave_requests'));
 
@@ -204,6 +222,40 @@ router.put('/credits/:employee_id', auth, authorize('leave_credits', 'edit'), as
     res.status(500).json({ message: 'Server error', error: err.message });
   } finally {
     client.release();
+  }
+});
+
+// UPLOAD leave attachment (optional supporting document) — returns a file_url to attach to the request
+router.post('/upload-attachment', auth, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file was uploaded.' });
+    }
+
+    const { employee_id } = req.body;
+    const cleanedFileName = req.file.originalname.replace(/[^a-zA-Z0-9.]/g, '_');
+    const filePath = `leave_attachments/emp_${employee_id}_${Date.now()}_${cleanedFileName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('hris-files')
+      .upload(filePath, req.file.buffer, {
+        contentType: req.file.mimetype,
+        upsert: true
+      });
+
+    if (uploadError) {
+      console.error('Supabase upload error:', uploadError.message);
+      return res.status(500).json({ message: 'Cloud storage upload failed.', error: uploadError.message });
+    }
+
+    const { data: urlData } = supabase.storage.from('hris-files').getPublicUrl(filePath);
+
+    res.json({ attachment_url: urlData.publicUrl, file_name: req.file.originalname });
+  } catch (err) {
+    if (err.message?.includes('Only PDF')) {
+      return res.status(400).json({ message: err.message });
+    }
+    res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
