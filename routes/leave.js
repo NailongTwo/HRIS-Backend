@@ -230,8 +230,14 @@ router.post('/', auth, async (req, res) => {
       });
     }
 
-    const count = await query('SELECT COUNT(*) FROM leave_requests');
-    const refNo = `LV-${new Date().getFullYear()}-${String(parseInt(count.rows[0].count) + 1).padStart(3, '0')}`;
+    const seqRes = await query(
+      `SELECT COALESCE(MAX(CAST(SPLIT_PART(reference_no, '-', 3) AS INTEGER)), 0) AS max_seq 
+       FROM leave_requests 
+       WHERE reference_no LIKE $1`,
+      [`LV-${new Date().getFullYear()}-%`]
+    );
+    const nextSeq = (seqRes.rows[0].max_seq || 0) + 1;
+    const refNo = `LV-${new Date().getFullYear()}-${String(nextSeq).padStart(3, '0')}`;
 
     const credit = await query(
       `SELECT id FROM leave_credits 
