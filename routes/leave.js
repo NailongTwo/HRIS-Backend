@@ -558,9 +558,9 @@ router.get('/credits', auth, authorize('leave_credits', 'view'), async (req, res
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
-// 2. PUT update leave credits for a single employee (Vacation, Sick, Emergency)
+// 2. PUT update leave credits for a single employee (supports all leave types)
 router.put('/credits', auth, authorize('leave_credits', 'edit'), async (req, res) => {
-  const { employee_id, year, vl_total, vl_used, sl_total, sl_used, el_total, el_used } = req.body;
+  const { employee_id, year, credits } = req.body;
   try {
     const updateCredit = async (code, total, used) => {
       const typeRes = await pool.query('SELECT id FROM leave_types WHERE code = $1', [code]);
@@ -574,9 +574,13 @@ router.put('/credits', auth, authorize('leave_credits', 'edit'), async (req, res
         [employee_id, leave_type_id, year, total, used]
       );
     };
-    if (vl_total !== undefined && vl_used !== undefined) await updateCredit('VL', vl_total, vl_used);
-    if (sl_total !== undefined && sl_used !== undefined) await updateCredit('SL', sl_total, sl_used);
-    if (el_total !== undefined && el_used !== undefined) await updateCredit('EL', el_total, el_used);
+    if (Array.isArray(credits)) {
+      for (const c of credits) {
+        if (c.total !== undefined && c.used !== undefined) {
+          await updateCredit(c.code, c.total, c.used);
+        }
+      }
+    }
     res.json({ message: 'Leave credits updated successfully', record: { employee_id: req.params?.employee_id || req.body?.employee_id } });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
