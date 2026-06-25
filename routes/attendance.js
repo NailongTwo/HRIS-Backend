@@ -435,61 +435,61 @@ router.get('/summary', auth, authorize('attendance', 'view'), async (req, res) =
  
     // Step 1: Get attendance stats from attendance_logs with day breakdown
     const attendanceRes = await pool.query(`
-      SELECT
-        -- ORDINARY DAYS: working days with time_in recorded, excluding holidays
-        COUNT(*) FILTER (
-          WHERE time_in IS NOT NULL 
-            AND day_type = 'Regular Working Day'
-            AND flag NOT IN ('Holiday')
-        ) AS ordinary_days,
-        
-        -- LEGAL HOLIDAY DAYS: legal holidays where employee worked (has time_in)
-        COUNT(*) FILTER (
-          WHERE time_in IS NOT NULL 
-            AND flag = 'Holiday'
-            AND EXISTS (
-              SELECT 1 FROM events e
-              JOIN event_types et ON e.event_type_id = et.id
-              WHERE et.holiday_type = 'Legal Holiday'
-                AND e.is_active = true
-                AND et.is_active = true
-                AND log_date::date BETWEEN e.start_datetime::date AND e.end_datetime::date
-            )
-        ) AS legal_holiday_days,
-        
-        -- SPECIAL HOLIDAY HOURS: hours worked on special holidays
-        COALESCE(SUM(hours_worked), 0) FILTER (
-          WHERE time_in IS NOT NULL 
-            AND flag = 'Holiday'
-            AND EXISTS (
-              SELECT 1 FROM events e
-              JOIN event_types et ON e.event_type_id = et.id
-              WHERE et.holiday_type = 'Special Holiday'
-                AND e.is_active = true
-                AND et.is_active = true
-                AND log_date::date BETWEEN e.start_datetime::date AND e.end_datetime::date
-            )
-        ) AS special_holiday_hours,
-        
-        -- Total days worked (original logic)
-        COUNT(*) FILTER (
-          WHERE time_in IS NOT NULL AND day_type = 'Regular Working Day'
-        ) AS days_worked,
-        
-        -- Days absent
-        COUNT(*) FILTER (WHERE attendance_status = 'Absent') AS days_absent,
-        
-        -- Days marked as holiday (for reference, may not be used anymore)
-        COUNT(*) FILTER (WHERE flag = 'Holiday') AS days_holiday,
-        
-        -- Time tracking
-        COALESCE(SUM(late_mins), 0) AS late_mins_total,
-        COALESCE(SUM(undertime_mins), 0) AS undertime_mins_total
-      FROM attendance_logs
-      WHERE employee_id = $1
-        AND log_date >= $2
-        AND log_date <= $3
-    `, [employee_id, start_date, end_date]);
+    SELECT
+      -- ORDINARY DAYS: working days with time_in recorded, excluding holidays
+      COUNT(*) FILTER (
+        WHERE time_in IS NOT NULL 
+          AND day_type = 'Regular Working Day'
+          AND flag NOT IN ('Holiday')
+      ) AS ordinary_days,
+  
+      -- LEGAL HOLIDAY DAYS: legal holidays where employee worked (has time_in)
+      COUNT(*) FILTER (
+        WHERE time_in IS NOT NULL 
+          AND flag = 'Holiday'
+          AND EXISTS (
+            SELECT 1 FROM events e
+            JOIN event_types et ON e.event_type_id = et.id
+            WHERE et.holiday_type = 'Legal Holiday'
+              AND e.is_active = true
+              AND et.is_active = true
+              AND log_date::date BETWEEN e.start_datetime::date AND e.end_datetime::date
+          )
+      ) AS legal_holiday_days,
+  
+      -- SPECIAL HOLIDAY HOURS: hours worked on special holidays
+      COALESCE(SUM(hours_worked) FILTER (
+        WHERE time_in IS NOT NULL 
+          AND flag = 'Holiday'
+          AND EXISTS (
+            SELECT 1 FROM events e
+            JOIN event_types et ON e.event_type_id = et.id
+            WHERE et.holiday_type = 'Special Holiday'
+              AND e.is_active = true
+              AND et.is_active = true
+              AND log_date::date BETWEEN e.start_datetime::date AND e.end_datetime::date
+          )
+      ), 0) AS special_holiday_hours,
+  
+      -- Total days worked (original logic)
+      COUNT(*) FILTER (
+        WHERE time_in IS NOT NULL AND day_type = 'Regular Working Day'
+      ) AS days_worked,
+  
+      -- Days absent
+      COUNT(*) FILTER (WHERE attendance_status = 'Absent') AS days_absent,
+  
+      -- Days marked as holiday (for reference, may not be used anymore)
+      COUNT(*) FILTER (WHERE flag = 'Holiday') AS days_holiday,
+  
+      -- Time tracking
+      COALESCE(SUM(late_mins), 0) AS late_mins_total,
+      COALESCE(SUM(undertime_mins), 0) AS undertime_mins_total
+    FROM attendance_logs
+    WHERE employee_id = $1
+      AND log_date >= $2
+      AND log_date <= $3
+  `, [employee_id, start_date, end_date]);
  
     // Step 2: Get APPROVED leave days
     const leaveRes = await pool.query(`
