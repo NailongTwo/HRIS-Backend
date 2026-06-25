@@ -39,9 +39,8 @@ router.get('/types/all', auth, authorize('event_types', 'view'), async (req, res
 
 // POST new event type
 router.post('/types', auth, authorize('event_types', 'create'), async (req, res) => {
-  const { name, description, color, is_active, is_non_working_day } = req.body;
+  const { name, description, color, is_active, is_non_working_day, holiday_type } = req.body;
   try {
-    // Check if name already exists
     const existing = await pool.query(
       'SELECT id FROM event_types WHERE name = $1',
       [name]
@@ -51,10 +50,10 @@ router.post('/types', auth, authorize('event_types', 'create'), async (req, res)
     }
 
     const result = await pool.query(
-      `INSERT INTO event_types (name, description, color, is_active, is_non_working_day)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO event_types (name, description, color, is_active, is_non_working_day, holiday_type)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
-      [name, description, color, is_active ?? true, is_non_working_day ?? false]
+      [name, description, color, is_active ?? true, is_non_working_day ?? false, holiday_type || 'Regular']
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -172,14 +171,14 @@ router.delete('/:id', auth, authorize('events', 'delete'), async (req, res) => {
 
 // UPDATE event type
 router.put('/types/:id', auth, authorize('event_types', 'edit'), async (req, res) => {
-  const { name, description, color, is_active, is_non_working_day } = req.body;
+  const { name, description, color, is_active, is_non_working_day, holiday_type } = req.body;
   try {
     const result = await pool.query(
       `UPDATE event_types 
-       SET name = $1, description = $2, color = $3, is_active = $4, is_non_working_day = $5
-       WHERE id = $6 
+       SET name = $1, description = $2, color = $3, is_active = $4, is_non_working_day = $5, holiday_type = $6
+       WHERE id = $7 
        RETURNING *`,
-      [name, description, color, is_active, is_non_working_day ?? false, req.params.id]
+      [name, description, color, is_active, is_non_working_day ?? false, holiday_type || 'Regular', req.params.id]
     );
     if (!result.rows[0]) {
       return res.status(404).json({ message: 'Event type not found' });
