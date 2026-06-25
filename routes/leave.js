@@ -559,21 +559,50 @@ router.get('/credits', auth, authorize('leave_credits', 'view'), async (req, res
   }
 });
 // 2. PUT update leave credits for a single employee (supports all leave types)
-router.put('/credits', auth, authorize('leave_credits', 'edit'), async (req, res) => {
+router.put('/credits', auditRoute('leave_credits'), auth, authorize('leave_credits', 'edit'), async (req, res) => {
   const { employee_id, year, credits } = req.body;
+  const performedBy = req.user.id;
+  const yr = year || new Date().getFullYear();
+  const client = await pool.connect();
   try {
+    await client.query('BEGIN');
+
     const updateCredit = async (code, total, used) => {
-      const typeRes = await pool.query('SELECT id FROM leave_types WHERE code = $1', [code]);
+      const typeRes = await client.query('SELECT id FROM leave_types WHERE code = $1', [code]);
       if (typeRes.rows.length === 0) return;
       const leave_type_id = typeRes.rows[0].id;
-      await pool.query(
+
+      const oldRes = await client.query(
+        `SELECT total_credits FROM leave_credits
+         WHERE employee_id = $1 AND leave_type_id = $2 AND year = $3`,
+        [employee_id, leave_type_id, yr]
+      );
+      const oldTotal = oldRes.rows[0] ? Number(oldRes.rows[0].total_credits) : 0;
+
+      await client.query(
         `INSERT INTO leave_credits (employee_id, leave_type_id, year, total_credits, used_credits)
          VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (employee_id, leave_type_id, year) 
+         ON CONFLICT (employee_id, leave_type_id, year)
          DO UPDATE SET total_credits = EXCLUDED.total_credits, used_credits = EXCLUDED.used_credits, updated_at = NOW()`,
-        [employee_id, leave_type_id, year, total, used]
+        [employee_id, leave_type_id, yr, total, used]
+      );
+
+      const balRes = await client.query(
+        `SELECT COALESCE(total_credits + carried_over - used_credits - pending_credits, 0) AS balance
+         FROM leave_credits
+         WHERE employee_id = $1 AND leave_type_id = $2 AND year = $3`,
+        [employee_id, leave_type_id, yr]
+      );
+      const balanceAfter = balRes.rows[0] ? Number(balRes.rows[0].balance) : 0;
+
+      const deltaTotal = total - oldTotal;
+      await client.query(
+        `INSERT INTO leave_ledger (employee_id, leave_type_id, transaction_type, amount, balance_after, remarks, performed_by)
+         VALUES ($1, $2, 'Adjustment', $3, $4, $5, $6)`,
+        [employee_id, leave_type_id, deltaTotal, balanceAfter, 'Manual edit via admin panel', performedBy]
       );
     };
+
     if (Array.isArray(credits)) {
       for (const c of credits) {
         if (c.total !== undefined && c.used !== undefined) {
@@ -581,9 +610,14 @@ router.put('/credits', auth, authorize('leave_credits', 'edit'), async (req, res
         }
       }
     }
+
+    await client.query('COMMIT');
     res.json({ message: 'Leave credits updated successfully', record: { employee_id: req.params?.employee_id || req.body?.employee_id } });
   } catch (err) {
+    await client.query('ROLLBACK');
     res.status(500).json({ message: 'Server error', error: err.message });
+  } finally {
+    client.release();
   }
 });
 // 3. POST allocate/bulk reset leave credits for all active employees
