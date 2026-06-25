@@ -1,6 +1,3 @@
-// payslips.js – Payslips API (UPDATED for new fields)
-// Key changes: Added sss_loan, pagibig_loan, cash_advance, day breakdowns, and sign-off fields
-
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
@@ -28,7 +25,8 @@ const upload = multer({
   }
 });
 
-// GET all payslips (admin view)
+
+// GET all payslips (admin view) — optionally filter by pay_period_id
 router.get('/', auth, authorize('payslips', 'view'), async (req, res) => {
   try {
     const { pay_period_id } = req.query;
@@ -90,19 +88,21 @@ router.get('/pay-periods/all', auth, authorize('payroll_periods', 'view'), async
 router.post('/pay-periods', auth, authorize('payroll_periods', 'create'), async (req, res) => {
   const { period_label, start_date, end_date, payment_date } = req.body;
   try {
+    // Automatically derive fields if not provided
     const start = new Date(start_date);
     const year = start.getFullYear();
     const month = start.getMonth() + 1;
-    const period_type = 'Monthly';
+    const period_type = 'Monthly'; // Always Monthly (not 1st/2nd Half)
 
     const finalPaymentDate = payment_date && payment_date.trim() !== '' ? payment_date : null;
-    
+    // Validate date logic
     if (new Date(start_date) >= new Date(end_date)) {
       return res.status(400).json({ 
         message: 'Period start date must be before end date.' 
       });
     }
 
+    // Check for overlapping periods
     const overlapCheck = await pool.query(
       `SELECT id, period_label, start_date, end_date 
        FROM pay_periods
@@ -119,13 +119,12 @@ router.post('/pay-periods', auth, authorize('payroll_periods', 'create'), async 
       const fmtDate = (d) => {
         if (!d) return '';
         if (d instanceof Date) return d.toISOString().split('T')[0];
-        return String(d).split('T')[0];
+        return String(d).split('T')[0]; // already a string like '2026-05-15' or '2026-05-15T00:00:00.000Z'
       };
       return res.status(400).json({ 
         message: `Date range overlaps with existing period "${overlap.period_label}" (${fmtDate(overlap.start_date)} to ${fmtDate(overlap.end_date)})` 
       });
     }
-
     const result = await pool.query(
       `INSERT INTO pay_periods 
       (period_label, period_type, year, month, start_date, end_date, payment_date, is_finalized) 
@@ -139,15 +138,17 @@ router.post('/pay-periods', auth, authorize('payroll_periods', 'create'), async 
   }
 });
 
-// UPDATE pay period
+// FINALIZE/RELEASE pay period
 router.put('/pay-periods/:id', auth, authorize('payroll_periods', 'edit'), async (req, res) => {
   const { period_label, start_date, end_date, payment_date } = req.body;
   
   try {
+    // Validate that at least one field is being updated
     if (!period_label && !start_date && !end_date && !payment_date) {
       return res.status(400).json({ message: 'At least one field is required to update.' });
     }
 
+    // Fetch the current row so we know the effective start/end if only one was sent
     const currentRes = await pool.query(
       `SELECT start_date, end_date FROM pay_periods WHERE id = $1`,
       [req.params.id]
@@ -165,6 +166,7 @@ router.put('/pay-periods/:id', auth, authorize('payroll_periods', 'edit'), async
     const effectiveStart = start_date || fmtDate(currentRes.rows[0].start_date);
     const effectiveEnd = end_date || fmtDate(currentRes.rows[0].end_date);
 
+    // Validate date logic if either date is being changed
     if (start_date || end_date) {
       if (new Date(effectiveStart) >= new Date(effectiveEnd)) {
         return res.status(400).json({ 
@@ -172,6 +174,7 @@ router.put('/pay-periods/:id', auth, authorize('payroll_periods', 'edit'), async
         });
       }
 
+      // Check for overlapping periods, excluding this period itself
       const overlapCheck = await pool.query(
         `SELECT id, period_label, start_date, end_date 
          FROM pay_periods
@@ -192,6 +195,7 @@ router.put('/pay-periods/:id', auth, authorize('payroll_periods', 'edit'), async
       }
     }
  
+    // Build dynamic UPDATE query
     const updateFields = [];
     const params = [];
     let paramIdx = 1;
@@ -214,6 +218,7 @@ router.put('/pay-periods/:id', auth, authorize('payroll_periods', 'edit'), async
       params.push(finalPaymentDate);
     }
  
+    // Add ID as last parameter
     params.push(req.params.id);
     const idIdx = paramIdx;
  
@@ -235,9 +240,10 @@ router.put('/pay-periods/:id', auth, authorize('payroll_periods', 'edit'), async
   }
 });
 
-// DELETE pay period
+// DELETE pay period (only if no payslips attached)
 router.delete('/pay-periods/:id', auth, authorize('payroll_periods', 'delete'), async (req, res) => {
   try {
+    // Check if any payslips exist for this period
     const payslipCheck = await pool.query(
       `SELECT COUNT(*) as count FROM payslips WHERE pay_period_id = $1`,
       [req.params.id]
@@ -249,6 +255,7 @@ router.delete('/pay-periods/:id', auth, authorize('payroll_periods', 'delete'), 
       });
     }
  
+    // Safe to delete
     const result = await pool.query(
       `DELETE FROM pay_periods WHERE id = $1 RETURNING *`,
       [req.params.id]
@@ -264,7 +271,9 @@ router.delete('/pay-periods/:id', auth, authorize('payroll_periods', 'delete'), 
   }
 });
 
-// DOWNLOAD payslip as PDF
+
+
+// DOWNLOAD payslip as PDF — returns stored pdf_url or structured data
 router.get('/:id/download', auth, async (req, res) => {
   try {
     const payslip = await pool.query(
@@ -288,22 +297,31 @@ router.get('/:id/download', auth, async (req, res) => {
       return res.status(404).json({ message: 'Payslip not found' });
     }
 
+    const lineItems = await pool.query(
+      'SELECT * FROM payslip_line_items WHERE payslip_id = $1 ORDER BY sort_order ASC',
+      [req.params.id]
+    );
+
     const data = payslip.rows[0];
 
+    // If a stored pdf_url exists (data URI or signed URL), redirect/return it
     if (data.pdf_url) {
+      // If it's a data URI, send it back; client will open in new tab
       return res.json({ type: 'url', url: data.pdf_url });
     }
 
+    // Otherwise return structured data so the client can generate the PDF
     res.json({
       type: 'data',
-      payslip: data
+      payslip: data,
+      line_items: lineItems.rows
     });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
-// GET single payslip
+// GET single payslip with line items
 router.get('/:id', auth, async (req, res) => {
   try {
     const payslip = await pool.query(
@@ -314,13 +332,23 @@ router.get('/:id', auth, async (req, res) => {
       [req.params.id]
     );
 
-    res.json(payslip.rows[0]);
+    const lineItems = await pool.query(
+      `SELECT * FROM payslip_line_items 
+      WHERE payslip_id = $1 
+      ORDER BY sort_order ASC`,
+      [req.params.id]
+    );
+
+    res.json({
+      payslip: payslip.rows[0],
+      line_items: lineItems.rows
+    });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
-// CREATE payslip with NEW FIELDS
+// CREATE payslip
 router.post('/', auth, authorize('payslips', 'create'), async (req, res) => {
   const {
     employee_id,
@@ -335,9 +363,6 @@ router.post('/', auth, authorize('payslips', 'create'), async (req, res) => {
     philhealth_deduction,
     pagibig_deduction,
     withholding_tax,
-    sss_loan,
-    pagibig_loan,
-    cash_advance,
     late_deduction,
     undertime_deduction, 
     absent_deduction,
@@ -350,17 +375,11 @@ router.post('/', auth, authorize('payslips', 'create'), async (req, res) => {
     ot_hours,
     late_mins_total,
     undertime_mins_total,
-    ordinary_days,
-    special_holiday_hours,
-    legal_holiday_days,
-    prepared_by_name,
-    prepared_by_title,
-    check_by_name,
-    check_by_title,
     generated_by
   } = req.body;
 
   try {
+    // Use MAX instead of COUNT to always get the next highest number
     const countRes = await pool.query(
       `SELECT COALESCE(MAX(CAST(SPLIT_PART(reference_no, '-', 4) AS INTEGER)), 0) AS max_seq 
        FROM payslips 
@@ -374,35 +393,29 @@ router.post('/', auth, authorize('payslips', 'create'), async (req, res) => {
       `INSERT INTO payslips 
       (reference_no, employee_id, pay_period_id, basic_pay, overtime_pay,
       holiday_pay, allowances, other_earnings, gross_pay, sss_deduction,
-      philhealth_deduction, pagibig_deduction, withholding_tax, sss_loan,
-      pagibig_loan, cash_advance, late_deduction, undertime_deduction, absent_deduction, 
-      other_deductions, total_deductions, net_pay, days_worked, days_absent, days_leave, 
-      ot_hours, late_mins_total, undertime_mins_total, ordinary_days, special_holiday_hours,
-      legal_holiday_days, prepared_by_name, prepared_by_title, check_by_name, check_by_title,
-      generated_by) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 
-      $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, 
-      $35, $36) 
+      philhealth_deduction, pagibig_deduction, withholding_tax, late_deduction,
+      undertime_deduction, absent_deduction, other_deductions, total_deductions, net_pay,
+      days_worked, days_absent, days_leave, ot_hours, late_mins_total, undertime_mins_total, generated_by) 
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 
+      $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26) 
       RETURNING *`,
-      [refNo, employee_id, pay_period_id, basic_pay, overtime_pay, holiday_pay, allowances, 
-      other_earnings, gross_pay, sss_deduction, philhealth_deduction, pagibig_deduction, 
-      withholding_tax, sss_loan || 0, pagibig_loan || 0, cash_advance || 0, late_deduction, 
-      undertime_deduction, absent_deduction, other_deductions, total_deductions, net_pay, 
-      days_worked, days_absent, days_leave, ot_hours, late_mins_total, undertime_mins_total,
-      ordinary_days, special_holiday_hours, legal_holiday_days, prepared_by_name, 
-      prepared_by_title, check_by_name, check_by_title, generated_by]
+      [refNo, employee_id, pay_period_id, basic_pay, overtime_pay,
+      holiday_pay, allowances, other_earnings, gross_pay, sss_deduction,
+      philhealth_deduction, pagibig_deduction, withholding_tax, late_deduction,
+      undertime_deduction, absent_deduction, other_deductions, total_deductions, net_pay,
+      days_worked, days_absent, days_leave, ot_hours, late_mins_total, undertime_mins_total, generated_by]
     );
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
-
-// UPLOAD payslip PDF
+// UPLOAD payslip PDF to Supabase and mark as released
 router.post('/:id/upload', auth, authorize('payslips', 'edit'), upload.single('file'), async (req, res) => {
   try {
     const { id } = req.params;
 
+    // Fetch existing payslip to get employee_id
     const existing = await pool.query('SELECT * FROM payslips WHERE id = $1', [id]);
     if (!existing.rows[0]) return res.status(404).json({ message: 'Payslip not found' });
     const { employee_id } = existing.rows[0];
@@ -431,6 +444,7 @@ router.post('/:id/upload', auth, authorize('payslips', 'edit'), upload.single('f
       pdfFileName = req.file.originalname;
     }
 
+    // Mark payslip as released; store pdf_url if file was provided
     const updateFields = pdfUrl
       ? `is_released = true, released_at = NOW(), pdf_url = $2, pdf_file_name = $3`
       : `is_released = true, released_at = NOW()`;
