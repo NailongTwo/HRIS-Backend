@@ -18,7 +18,9 @@ router.get('/', auth, authorize('work_schedules', 'view'), async (req, res) => {
                     'day_of_week', wsd.day_of_week,
                     'is_working', wsd.is_working,
                     'start_time', wsd.start_time,
-                    'end_time', wsd.end_time
+                    'end_time', wsd.end_time,
+                    'break_start', wsd.break_start,
+                    'break_end', wsd.break_end
                   ) ORDER BY CASE wsd.day_of_week
                     WHEN 'Monday' THEN 1
                     WHEN 'Tuesday' THEN 2
@@ -69,7 +71,7 @@ router.get('/:id', auth, async (req, res) => {
     }
 
     const daysResult = await pool.query(`
-      SELECT id, day_of_week, is_working, start_time, end_time
+      SELECT id, day_of_week, is_working, start_time, end_time, break_start, break_end
       FROM work_schedule_days
       WHERE work_schedule_id = $1
       ORDER BY CASE day_of_week
@@ -132,17 +134,21 @@ router.post('/', auth, authorize('work_schedules', 'create'), async (req, res) =
           day_of_week: dName,
           is_working: false,
           start_time: null,
-          end_time: null
+          end_time: null,
+          break_start: null,
+          break_end: null
         };
 
         const isWorking = !!dObj.is_working;
         const startTime = isWorking ? dObj.start_time || null : null;
         const endTime = isWorking ? dObj.end_time || null : null;
+        const breakStart = isWorking ? dObj.break_start || null : null;
+        const breakEnd = isWorking ? dObj.break_end || null : null;
 
         await client.query(
-          `INSERT INTO work_schedule_days (work_schedule_id, day_of_week, is_working, start_time, end_time)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [scheduleId, dName, isWorking, startTime, endTime]
+          `INSERT INTO work_schedule_days (work_schedule_id, day_of_week, is_working, start_time, end_time, break_start, break_end)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [scheduleId, dName, isWorking, startTime, endTime, breakStart, breakEnd]
         );
       }
     } else {
@@ -150,9 +156,9 @@ router.post('/', auth, authorize('work_schedules', 'create'), async (req, res) =
       for (const dName of DAYS_OF_WEEK) {
         const isWorking = !['Saturday', 'Sunday'].includes(dName);
         await client.query(
-          `INSERT INTO work_schedule_days (work_schedule_id, day_of_week, is_working, start_time, end_time)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [scheduleId, dName, isWorking, isWorking ? '08:00:00' : null, isWorking ? '17:00:00' : null]
+          `INSERT INTO work_schedule_days (work_schedule_id, day_of_week, is_working, start_time, end_time, break_start, break_end)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [scheduleId, dName, isWorking, isWorking ? '08:00:00' : null, isWorking ? '17:00:00' : null, isWorking ? '12:00:00' : null, isWorking ? '13:00:00' : null]
         );
       }
     }
@@ -161,7 +167,7 @@ router.post('/', auth, authorize('work_schedules', 'create'), async (req, res) =
 
     // Fetch full created schedule for return
     const daysResult = await pool.query(`
-      SELECT id, day_of_week, is_working, start_time, end_time
+      SELECT id, day_of_week, is_working, start_time, end_time, break_start, break_end
       FROM work_schedule_days
       WHERE work_schedule_id = $1
       ORDER BY CASE day_of_week
@@ -243,16 +249,20 @@ router.put('/:id', auth, authorize('work_schedules', 'edit'), async (req, res) =
           const isWorking = !!dObj.is_working;
           const startTime = isWorking ? dObj.start_time || null : null;
           const endTime = isWorking ? dObj.end_time || null : null;
+          const breakStart = isWorking ? dObj.break_start || null : null;
+          const breakEnd = isWorking ? dObj.break_end || null : null;
 
           await client.query(
-            `INSERT INTO work_schedule_days (work_schedule_id, day_of_week, is_working, start_time, end_time)
-             VALUES ($1, $2, $3, $4, $5)
+            `INSERT INTO work_schedule_days (work_schedule_id, day_of_week, is_working, start_time, end_time, break_start, break_end)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
              ON CONFLICT (work_schedule_id, day_of_week) DO UPDATE
                SET is_working = EXCLUDED.is_working,
                    start_time = EXCLUDED.start_time,
                    end_time = EXCLUDED.end_time,
+                   break_start = EXCLUDED.break_start,
+                   break_end = EXCLUDED.break_end,
                    updated_at = NOW()`,
-            [id, dName, isWorking, startTime, endTime]
+            [id, dName, isWorking, startTime, endTime, breakStart, breakEnd]
           );
         }
       }
@@ -261,7 +271,7 @@ router.put('/:id', auth, authorize('work_schedules', 'edit'), async (req, res) =
     await client.query('COMMIT');
 
     const daysResult = await pool.query(`
-      SELECT id, day_of_week, is_working, start_time, end_time
+      SELECT id, day_of_week, is_working, start_time, end_time, break_start, break_end
       FROM work_schedule_days
       WHERE work_schedule_id = $1
       ORDER BY CASE day_of_week

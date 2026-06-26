@@ -49,7 +49,7 @@ async function getBusinessDateAndSchedule(employeeId, now = new Date()) {
 
   // Fetch the employee's schedule and grace period
   const scheduleRes = await pool.query(
-    `SELECT wsd.day_of_week, wsd.is_working, wsd.start_time, wsd.end_time, ws.grace_period_minutes
+    `SELECT wsd.day_of_week, wsd.is_working, wsd.start_time, wsd.end_time, wsd.break_start, wsd.break_end, ws.grace_period_minutes
      FROM employees e
      JOIN work_schedules ws ON e.work_schedule_id = ws.id
      JOIN work_schedule_days wsd ON ws.id = wsd.work_schedule_id
@@ -75,6 +75,8 @@ async function getBusinessDateAndSchedule(employeeId, now = new Date()) {
       is_working: false,
       start_time: null,
       end_time: null,
+      break_start: null,
+      break_end: null,
       grace_period_minutes: 0
     };
   };
@@ -93,11 +95,29 @@ async function getBusinessDateAndSchedule(employeeId, now = new Date()) {
       expectedEnd.setDate(expectedEnd.getDate() + 1);
     }
 
+    let expectedBreakStart = null;
+    let expectedBreakEnd = null;
+    if (sched.break_start && sched.break_end) {
+      const bStart = sched.break_start.includes(':') && sched.break_start.split(':').length === 2 ? `${sched.break_start}:00` : sched.break_start;
+      const bEnd = sched.break_end.includes(':') && sched.break_end.split(':').length === 2 ? `${sched.break_end}:00` : sched.break_end;
+
+      expectedBreakStart = new Date(`${dateStr}T${bStart}+08:00`);
+      expectedBreakEnd = new Date(`${dateStr}T${bEnd}+08:00`);
+      if (startTime > endTime) {
+        if (bStart < startTime) {
+          expectedBreakStart.setDate(expectedBreakStart.getDate() + 1);
+        }
+        if (bEnd < startTime) {
+          expectedBreakEnd.setDate(expectedBreakEnd.getDate() + 1);
+        }
+      }
+    }
+
     // Shift window starts 4 hours before expectedStart and ends 4 hours after expectedEnd
     const windowStart = new Date(expectedStart.getTime() - 4 * 60 * 60 * 1000);
     const windowEnd = new Date(expectedEnd.getTime() + 4 * 60 * 60 * 1000);
 
-    return { expectedStart, expectedEnd, windowStart, windowEnd };
+    return { expectedStart, expectedEnd, windowStart, windowEnd, expectedBreakStart, expectedBreakEnd };
   };
 
   // 1. Check if now falls within yesterday's overnight shift window
@@ -656,9 +676,15 @@ router.put('/time-out/:id', auth, async (req, res) => {
       ? shiftTimes.expectedEnd
       : now;
     
-    const hoursWorked = effectiveEnd > effectiveStart
-      ? ((effectiveEnd - effectiveStart) / 3600000).toFixed(2)
-      : '0.00';
+    let totalMs = effectiveEnd > effectiveStart ? (effectiveEnd - effectiveStart) : 0;
+    if (totalMs > 0 && shiftTimes.expectedBreakStart && shiftTimes.expectedBreakEnd) {
+      const overlapStart = new Date(Math.max(effectiveStart.getTime(), shiftTimes.expectedBreakStart.getTime()));
+      const overlapEnd = new Date(Math.min(effectiveEnd.getTime(), shiftTimes.expectedBreakEnd.getTime()));
+      if (overlapEnd > overlapStart) {
+        totalMs -= (overlapEnd - overlapStart);
+      }
+    }
+    const hoursWorked = (totalMs / 3600000).toFixed(2);
 
     let undertimeMins = 0;
     let attendanceStatus = log.attendance_status || 'Present';
@@ -730,11 +756,9 @@ router.put('/:id/adjust', auth, authorize('attendance', 'edit'), async (req, res
     const approvedLeaveName = hasApprovedLeave ? leavesRes.rows[0].leave_type_name : null;
 
     // Check holiday on this date
-    const isHoliday = await checkHolidayOnDate(logDateStr);
-
-    // Fetch employee schedule
+    const isHoliday = await che     // Fetch employee schedule
     const schedRes = await pool.query(
-      `SELECT wsd.day_of_week, wsd.is_working, wsd.start_time, wsd.end_time, ws.grace_period_minutes
+      `SELECT wsd.day_of_week, wsd.is_working, wsd.start_time, wsd.end_time, wsd.break_start, wsd.break_end, ws.grace_period_minutes
        FROM employees e
        JOIN work_schedules ws ON e.work_schedule_id = ws.id
        JOIN work_schedule_days wsd ON ws.id = wsd.work_schedule_id
@@ -755,12 +779,16 @@ router.put('/:id/adjust', auth, authorize('attendance', 'edit'), async (req, res
         is_working: false,
         start_time: null,
         end_time: null,
+        break_start: null,
+        break_end: null,
         grace_period_minutes: 0
       };
     }
 
     let expectedStart = null;
     let expectedEnd = null;
+    let expectedBreakStart = null;
+    let expectedBreakEnd = null;
     if (scheduleDay.is_working && scheduleDay.start_time && scheduleDay.end_time) {
       const startTime = scheduleDay.start_time.includes(':') && scheduleDay.start_time.split(':').length === 2 ? `${scheduleDay.start_time}:00` : scheduleDay.start_time;
       const endTime = scheduleDay.end_time.includes(':') && scheduleDay.end_time.split(':').length === 2 ? `${scheduleDay.end_time}:00` : scheduleDay.end_time;
@@ -771,6 +799,22 @@ router.put('/:id/adjust', auth, authorize('attendance', 'edit'), async (req, res
         // Overnight shift
         expectedEnd.setDate(expectedEnd.getDate() + 1);
       }
+
+      if (scheduleDay.break_start && scheduleDay.break_end) {
+        const bStart = scheduleDay.break_start.includes(':') && scheduleDay.break_start.split(':').length === 2 ? `${scheduleDay.break_start}:00` : scheduleDay.break_start;
+        const bEnd = scheduleDay.break_end.includes(':') && scheduleDay.break_end.split(':').length === 2 ? `${scheduleDay.break_end}:00` : scheduleDay.break_end;
+
+        expectedBreakStart = new Date(`${logDateStr}T${bStart}+08:00`);
+        expectedBreakEnd = new Date(`${logDateStr}T${bEnd}+08:00`);
+        if (startTime > endTime) {
+          if (bStart < startTime) {
+            expectedBreakStart.setDate(expectedBreakStart.getDate() + 1);
+          }
+          if (bEnd < startTime) {
+            expectedBreakEnd.setDate(expectedBreakEnd.getDate() + 1);
+          }
+        }
+      }
     }
 
     const finalTimeIn = (time_in && !isNaN(new Date(time_in).getTime())) ? new Date(time_in) : null;
@@ -780,7 +824,15 @@ router.put('/:id/adjust', auth, authorize('attendance', 'edit'), async (req, res
     if (finalTimeIn && finalTimeOut) {
       const effIn = (expectedStart && finalTimeIn < expectedStart) ? expectedStart : finalTimeIn;
       const effOut = (expectedEnd && finalTimeOut > expectedEnd) ? expectedEnd : finalTimeOut;
-      hoursWorked = effOut > effIn ? ((effOut - effIn) / 3600000).toFixed(2) : '0.00';
+      let totalMs = effOut > effIn ? (effOut - effIn) : 0;
+      if (totalMs > 0 && expectedBreakStart && expectedBreakEnd) {
+        const overlapStart = new Date(Math.max(effIn.getTime(), expectedBreakStart.getTime()));
+        const overlapEnd = new Date(Math.min(effOut.getTime(), expectedBreakEnd.getTime()));
+        if (overlapEnd > overlapStart) {
+          totalMs -= (overlapEnd - overlapStart);
+        }
+      }
+      hoursWorked = (totalMs / 3600000).toFixed(2);
     }
 
     let dayType = 'Regular Working Day';
