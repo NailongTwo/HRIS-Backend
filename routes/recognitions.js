@@ -10,10 +10,12 @@ router.get('/employee/:id', auth, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT r.*, 
-             e.first_name AS awarded_by_first_name, 
-             e.last_name AS awarded_by_last_name
+             e.first_name, e.last_name, e.employee_no,
+             a.first_name AS awarded_by_first_name, 
+             a.last_name AS awarded_by_last_name
       FROM recognitions r
-      LEFT JOIN employees e ON r.awarded_by = e.id
+      LEFT JOIN employees e ON r.employee_id = e.id
+      LEFT JOIN employees a ON r.awarded_by = a.id
       WHERE r.employee_id = $1
       ORDER BY r.awarded_date DESC
     `, [req.params.id]);
