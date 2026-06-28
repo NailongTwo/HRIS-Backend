@@ -455,61 +455,78 @@ router.get('/summary', auth, authorize('attendance', 'view'), async (req, res) =
 
     // Step 1: Get attendance stats from attendance_logs with day breakdown
     const attendanceRes = await pool.query(`
+      WITH emp_schedule AS (
+        SELECT e.id AS employee_id, e.work_schedule_id
+        FROM employees e
+        WHERE e.id = $1
+      )
       SELECT
         -- ORDINARY DAYS: working days with time_in recorded, excluding holidays
         COUNT(*) FILTER (
-          WHERE time_in IS NOT NULL
-            AND day_type = 'Regular Working Day'
-            AND flag NOT IN ('Holiday')
+          WHERE al.time_in IS NOT NULL
+            AND al.day_type = 'Regular Working Day'
+            AND al.flag NOT IN ('Holiday')
         ) AS ordinary_days,
 
         -- LEGAL HOLIDAY DAYS: legal holidays where employee worked (has time_in)
         COUNT(*) FILTER (
-          WHERE time_in IS NOT NULL
-            AND flag = 'Holiday'
+          WHERE al.time_in IS NOT NULL
+            AND al.flag = 'Holiday'
             AND EXISTS (
-              SELECT 1 FROM events e
-              JOIN event_types et ON e.event_type_id = et.id
+              SELECT 1 FROM events e2
+              JOIN event_types et ON e2.event_type_id = et.id
               WHERE et.holiday_type = 'Legal Holiday'
-                AND e.is_active = true
+                AND e2.is_active = true
                 AND et.is_active = true
-                AND log_date::date BETWEEN e.start_datetime::date AND e.end_datetime::date
+                AND al.log_date::date BETWEEN e2.start_datetime::date AND e2.end_datetime::date
             )
         ) AS legal_holiday_days,
 
-        -- SPECIAL HOLIDAY HOURS: hours worked on special holidays
-        -- NOTE: FILTER must apply directly to the aggregate (SUM), not to COALESCE.
-        COALESCE(SUM(hours_worked) FILTER (
-          WHERE time_in IS NOT NULL
-            AND flag = 'Holiday'
-            AND EXISTS (
-              SELECT 1 FROM events e
-              JOIN event_types et ON e.event_type_id = et.id
-              WHERE et.holiday_type = 'Special Holiday'
-                AND e.is_active = true
-                AND et.is_active = true
-                AND log_date::date BETWEEN e.start_datetime::date AND e.end_datetime::date
+        -- SPECIAL HOLIDAY / REST DAY HOURS: hours worked on a calendar special holiday
+        -- OR on a day the employee's schedule marks as non-working (e.g. Sunday).
+        -- Both are bundled into one "Sunday / Special Holiday Pay" bucket.
+        COALESCE(SUM(al.hours_worked) FILTER (
+          WHERE al.time_in IS NOT NULL
+            AND (
+              -- calendar special holiday
+              EXISTS (
+                SELECT 1 FROM events e2
+                JOIN event_types et ON e2.event_type_id = et.id
+                WHERE et.holiday_type = 'Special Holiday'
+                  AND e2.is_active = true
+                  AND et.is_active = true
+                  AND al.log_date::date BETWEEN e2.start_datetime::date AND e2.end_datetime::date
+              )
+              OR
+              -- worked on a non-scheduled (rest) day per the employee's work schedule
+              EXISTS (
+                SELECT 1 FROM emp_schedule es
+                JOIN work_schedule_days wsd
+                  ON wsd.work_schedule_id = es.work_schedule_id
+                 AND wsd.day_of_week = TRIM(TO_CHAR(al.log_date::date, 'Day'))
+                WHERE wsd.is_working = false
+              )
             )
         ), 0) AS special_holiday_hours,
 
         -- Total days worked (original logic, kept for backward compatibility)
         COUNT(*) FILTER (
-          WHERE time_in IS NOT NULL AND day_type = 'Regular Working Day'
+          WHERE al.time_in IS NOT NULL AND al.day_type = 'Regular Working Day'
         ) AS days_worked,
 
         -- Days absent
-        COUNT(*) FILTER (WHERE attendance_status = 'Absent') AS days_absent,
+        COUNT(*) FILTER (WHERE al.attendance_status = 'Absent') AS days_absent,
 
         -- Days marked as holiday (reference / backward compatibility)
-        COUNT(*) FILTER (WHERE flag = 'Holiday') AS days_holiday,
+        COUNT(*) FILTER (WHERE al.flag = 'Holiday') AS days_holiday,
 
         -- Time tracking
-        COALESCE(SUM(late_mins), 0) AS late_mins_total,
-        COALESCE(SUM(undertime_mins), 0) AS undertime_mins_total
-      FROM attendance_logs
-      WHERE employee_id = $1
-        AND log_date >= $2
-        AND log_date <= $3
+        COALESCE(SUM(al.late_mins), 0) AS late_mins_total,
+        COALESCE(SUM(al.undertime_mins), 0) AS undertime_mins_total
+      FROM attendance_logs al
+      WHERE al.employee_id = $1
+        AND al.log_date >= $2
+        AND al.log_date <= $3
     `, [employee_id, start_date, end_date]);
 
     // Step 2: Get APPROVED leave days
