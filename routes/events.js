@@ -39,7 +39,7 @@ router.get('/types/all', auth, authorize('event_types', 'view'), async (req, res
 
 // POST new event type
 router.post('/types', auth, authorize('event_types', 'create'), async (req, res) => {
-  const { name, description, color, is_active, is_non_working_day, holiday_type } = req.body;
+  const { name, description, color, is_active, holiday_type } = req.body;
   try {
     const existing = await pool.query(
       'SELECT id FROM event_types WHERE name = $1',
@@ -49,11 +49,16 @@ router.post('/types', auth, authorize('event_types', 'create'), async (req, res)
       return res.status(400).json({ message: 'Event type already exists!' });
     }
 
+    const finalHolidayType = holiday_type || 'Regular';
+    // Legal/Special Holiday types are always non-working; Regular is always working.
+    // This is now derived, not independently settable from the frontend.
+    const derivedIsNonWorkingDay = finalHolidayType !== 'Regular';
+
     const result = await pool.query(
       `INSERT INTO event_types (name, description, color, is_active, is_non_working_day, holiday_type)
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
-      [name, description, color, is_active ?? true, is_non_working_day ?? false, holiday_type || 'Regular']
+      [name, description, color, is_active ?? true, derivedIsNonWorkingDay, finalHolidayType]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -171,14 +176,17 @@ router.delete('/:id', auth, authorize('events', 'delete'), async (req, res) => {
 
 // UPDATE event type
 router.put('/types/:id', auth, authorize('event_types', 'edit'), async (req, res) => {
-  const { name, description, color, is_active, is_non_working_day, holiday_type } = req.body;
+  const { name, description, color, is_active, holiday_type } = req.body;
   try {
+    const finalHolidayType = holiday_type || 'Regular';
+    const derivedIsNonWorkingDay = finalHolidayType !== 'Regular';
+
     const result = await pool.query(
       `UPDATE event_types 
        SET name = $1, description = $2, color = $3, is_active = $4, is_non_working_day = $5, holiday_type = $6
        WHERE id = $7 
        RETURNING *`,
-      [name, description, color, is_active, is_non_working_day ?? false, holiday_type || 'Regular', req.params.id]
+      [name, description, color, is_active, derivedIsNonWorkingDay, finalHolidayType, req.params.id]
     );
     if (!result.rows[0]) {
       return res.status(404).json({ message: 'Event type not found' });
@@ -188,6 +196,7 @@ router.put('/types/:id', auth, authorize('event_types', 'edit'), async (req, res
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
+
 // DELETE event type (soft delete)
 router.delete('/types/:id', auth, authorize('event_types', 'delete'), async (req, res) => {
   try {
