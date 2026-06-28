@@ -473,14 +473,34 @@ router.get('/summary', auth, authorize('attendance', 'view'), async (req, res) =
           WHERE al.time_in IS NOT NULL
             AND al.flag = 'Holiday'
             AND EXISTS (
-              SELECT 1 FROM events e2
-              JOIN event_types et ON e2.event_type_id = et.id
+              SELECT 1
+              FROM events e2
+              JOIN event_types et
+                ON e2.event_type_id = et.id
               WHERE et.holiday_type = 'Legal Holiday'
                 AND e2.is_active = true
                 AND et.is_active = true
-                AND al.log_date::date BETWEEN e2.start_datetime::date AND e2.end_datetime::date
+                AND al.log_date::date
+                    BETWEEN e2.start_datetime::date
+                        AND e2.end_datetime::date
             )
         ) AS legal_holiday_days,
+        COUNT(*) FILTER (
+          WHERE al.time_in IS NULL
+            AND al.flag = 'Holiday'
+            AND EXISTS (
+              SELECT 1
+              FROM events e2
+              JOIN event_types et
+                ON e2.event_type_id = et.id
+              WHERE et.holiday_type = 'Legal Holiday'
+                AND e2.is_active = true
+                AND et.is_active = true
+                AND al.log_date::date
+                    BETWEEN e2.start_datetime::date
+                        AND e2.end_datetime::date
+            )
+        ) AS legal_holiday_days_unworked,
 
         -- SPECIAL HOLIDAY / REST DAY HOURS: hours worked on a calendar special holiday
         -- OR on a day the employee's schedule marks as non-working (e.g. Sunday).
@@ -568,6 +588,7 @@ router.get('/summary', auth, authorize('attendance', 'view'), async (req, res) =
     // Day breakdown values
     const ordinaryDays = parseInt(attRow.ordinary_days) || 0;
     const legalHolidayDays = parseInt(attRow.legal_holiday_days) || 0;
+    const legalHolidayDaysUnworked = parseInt(attRow.legal_holiday_days_unworked) || 0;
     const specialHolidayHours = parseFloat(attRow.special_holiday_hours) || 0;
 
     // Existing values
@@ -581,7 +602,11 @@ router.get('/summary', auth, authorize('attendance', 'view'), async (req, res) =
 
     // Calculate pay values
     const overtimePay = (otHours * hourlyRate * 1.25).toFixed(2);
-    const holidayPay = (legalHolidayDays * dailyRate).toFixed(2);
+    const holidayPay =
+      (
+          (legalHolidayDays * dailyRate * 2) +
+          (legalHolidayDaysUnworked * dailyRate)
+      ).toFixed(2);
     const specialHolidayPay = (specialHolidayHours * hourlyRate * 1.25).toFixed(2);
     const lateDeduction = ((lateMins / 60) * hourlyRate).toFixed(2);
     const undertimeDeduction = ((undertimeMins / 60) * hourlyRate).toFixed(2);
@@ -592,6 +617,7 @@ router.get('/summary', auth, authorize('attendance', 'view'), async (req, res) =
       ordinary_days: ordinaryDays,
       legal_holiday_days: legalHolidayDays,
       special_holiday_hours: specialHolidayHours,
+      legal_holiday_days_unworked: legalHolidayDaysUnworked,
 
       // Existing fields (backward compatibility)
       days_worked: daysWorked,
