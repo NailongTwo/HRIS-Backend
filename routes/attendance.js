@@ -446,21 +446,64 @@ router.get('/employee/:id', auth, authorize('attendance', 'view'), async (req, r
 router.get('/summary', auth, authorize('attendance', 'view'), async (req, res) => {
   try {
     const { employee_id, start_date, end_date } = req.query;
- 
+
     if (!employee_id || !start_date || !end_date) {
       return res.status(400).json({
         message: 'employee_id, start_date, and end_date are required'
       });
     }
- 
-    // Step 1: Get attendance stats from attendance_logs
+
+    // Step 1: Get attendance stats from attendance_logs with day breakdown
     const attendanceRes = await pool.query(`
       SELECT
+        -- ORDINARY DAYS: working days with time_in recorded, excluding holidays
+        COUNT(*) FILTER (
+          WHERE time_in IS NOT NULL
+            AND day_type = 'Regular Working Day'
+            AND flag NOT IN ('Holiday')
+        ) AS ordinary_days,
+
+        -- LEGAL HOLIDAY DAYS: legal holidays where employee worked (has time_in)
+        COUNT(*) FILTER (
+          WHERE time_in IS NOT NULL
+            AND flag = 'Holiday'
+            AND EXISTS (
+              SELECT 1 FROM events e
+              JOIN event_types et ON e.event_type_id = et.id
+              WHERE et.holiday_type = 'Legal Holiday'
+                AND e.is_active = true
+                AND et.is_active = true
+                AND log_date::date BETWEEN e.start_datetime::date AND e.end_datetime::date
+            )
+        ) AS legal_holiday_days,
+
+        -- SPECIAL HOLIDAY HOURS: hours worked on special holidays
+        -- NOTE: FILTER must apply directly to the aggregate (SUM), not to COALESCE.
+        COALESCE(SUM(hours_worked) FILTER (
+          WHERE time_in IS NOT NULL
+            AND flag = 'Holiday'
+            AND EXISTS (
+              SELECT 1 FROM events e
+              JOIN event_types et ON e.event_type_id = et.id
+              WHERE et.holiday_type = 'Special Holiday'
+                AND e.is_active = true
+                AND et.is_active = true
+                AND log_date::date BETWEEN e.start_datetime::date AND e.end_datetime::date
+            )
+        ), 0) AS special_holiday_hours,
+
+        -- Total days worked (original logic, kept for backward compatibility)
         COUNT(*) FILTER (
           WHERE time_in IS NOT NULL AND day_type = 'Regular Working Day'
         ) AS days_worked,
-        COUNT(*) FILTER (WHERE attendance_status = 'Absent')    AS days_absent,
-        COUNT(*) FILTER (WHERE flag = 'Holiday')   AS days_holiday,
+
+        -- Days absent
+        COUNT(*) FILTER (WHERE attendance_status = 'Absent') AS days_absent,
+
+        -- Days marked as holiday (reference / backward compatibility)
+        COUNT(*) FILTER (WHERE flag = 'Holiday') AS days_holiday,
+
+        -- Time tracking
         COALESCE(SUM(late_mins), 0) AS late_mins_total,
         COALESCE(SUM(undertime_mins), 0) AS undertime_mins_total
       FROM attendance_logs
@@ -468,7 +511,7 @@ router.get('/summary', auth, authorize('attendance', 'view'), async (req, res) =
         AND log_date >= $2
         AND log_date <= $3
     `, [employee_id, start_date, end_date]);
- 
+
     // Step 2: Get APPROVED leave days
     const leaveRes = await pool.query(`
       SELECT COALESCE(SUM(total_days), 0) AS total_leave_days
@@ -477,7 +520,7 @@ router.get('/summary', auth, authorize('attendance', 'view'), async (req, res) =
         AND status = 'Approved'
         AND NOT (end_date < $2 OR start_date > $3)
     `, [employee_id, start_date, end_date]);
- 
+
     // Step 3: Get APPROVED OT hours
     const otRes = await pool.query(`
       SELECT COALESCE(SUM(planned_hours), 0) AS total_ot_hours
@@ -486,52 +529,74 @@ router.get('/summary', auth, authorize('attendance', 'view'), async (req, res) =
         AND status = 'Approved'
         AND ot_date BETWEEN $2 AND $3
     `, [employee_id, start_date, end_date]);
- 
+
     // Step 4: Get compensation rates
     const compRes = await pool.query(`
-      SELECT daily_rate, hourly_rate
+      SELECT daily_rate, hourly_rate, basic_salary
       FROM compensation_records
-      WHERE employee_id = $1 AND end_date IS NULL
+      WHERE employee_id = $1 AND effective_date <= $2
       ORDER BY effective_date DESC LIMIT 1
-    `, [employee_id]);
- 
+    `, [employee_id, end_date]);
+
     // Parse results
     const attRow = attendanceRes.rows[0] || {};
     const leaveRow = leaveRes.rows[0] || {};
     const otRow = otRes.rows[0] || {};
     const comp = compRes.rows[0] || {};
- 
-    const dailyRate  = parseFloat(comp.daily_rate)  || 0;
+
+    const dailyRate = parseFloat(comp.daily_rate) || 0;
     const hourlyRate = parseFloat(comp.hourly_rate) || 0;
- 
-    const daysWorked    = parseInt(attRow.days_worked) || 0;
-    const daysAbsent    = parseInt(attRow.days_absent) || 0;
-    const daysLeave     = parseFloat(leaveRow.total_leave_days) || 0;
-    const daysHoliday   = parseInt(attRow.days_holiday) || 0;
-    const lateMins      = parseInt(attRow.late_mins_total) || 0;
+    const basicSalary = parseFloat(comp.basic_salary) || 0;
+
+    // Day breakdown values
+    const ordinaryDays = parseInt(attRow.ordinary_days) || 0;
+    const legalHolidayDays = parseInt(attRow.legal_holiday_days) || 0;
+    const specialHolidayHours = parseFloat(attRow.special_holiday_hours) || 0;
+
+    // Existing values
+    const daysWorked = parseInt(attRow.days_worked) || 0;
+    const daysAbsent = parseInt(attRow.days_absent) || 0;
+    const daysLeave = parseFloat(leaveRow.total_leave_days) || 0;
+    const daysHoliday = parseInt(attRow.days_holiday) || 0;
+    const lateMins = parseInt(attRow.late_mins_total) || 0;
     const undertimeMins = parseInt(attRow.undertime_mins_total) || 0;
-    const otHours       = parseFloat(otRow.total_ot_hours) || 0;
- 
+    const otHours = parseFloat(otRow.total_ot_hours) || 0;
+
     // Calculate pay values
-    const overtimePay   = (otHours * hourlyRate * 1.25).toFixed(2);
-    const holidayPay    = (daysHoliday * dailyRate).toFixed(2);
+    const overtimePay = (otHours * hourlyRate * 1.25).toFixed(2);
+    const holidayPay = (legalHolidayDays * dailyRate).toFixed(2);
+    const specialHolidayPay = (specialHolidayHours * hourlyRate * 1.25).toFixed(2);
     const lateDeduction = ((lateMins / 60) * hourlyRate).toFixed(2);
     const undertimeDeduction = ((undertimeMins / 60) * hourlyRate).toFixed(2);
     const absentDeduction = (daysAbsent * dailyRate).toFixed(2);
- 
+
     res.json({
-      days_worked:      daysWorked,
-      days_absent:      daysAbsent,
-      days_leave:       daysLeave,
-      days_holiday:     daysHoliday,
-      ot_hours:         otHours,
-      late_mins_total:  lateMins,
-      undertime_mins_total: undertimeMins,  
-      overtime_pay:     overtimePay,
-      holiday_pay:      holidayPay,
-      late_deduction:   lateDeduction,
-      undertime_deduction: undertimeDeduction, 
+      // Day breakdown
+      ordinary_days: ordinaryDays,
+      legal_holiday_days: legalHolidayDays,
+      special_holiday_hours: specialHolidayHours,
+
+      // Existing fields (backward compatibility)
+      days_worked: daysWorked,
+      days_absent: daysAbsent,
+      days_leave: daysLeave,
+      days_holiday: daysHoliday,
+      ot_hours: otHours,
+      late_mins_total: lateMins,
+      undertime_mins_total: undertimeMins,
+
+      // Pay calculations
+      overtime_pay: overtimePay,
+      holiday_pay: holidayPay,
+      special_holiday_pay: specialHolidayPay,
+      late_deduction: lateDeduction,
+      undertime_deduction: undertimeDeduction,
       absent_deduction: absentDeduction,
+
+      // Employee rates
+      daily_rate: dailyRate,
+      hourly_rate: hourlyRate,
+      basic_salary: basicSalary
     });
   } catch (err) {
     console.error('Attendance summary error:', err);
