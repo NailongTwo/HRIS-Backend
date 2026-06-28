@@ -319,15 +319,20 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 // CREATE payslip
+// CREATE payslip
 router.post('/', auth, authorize('payslips', 'create'), async (req, res) => {
   const {
     employee_id,
     pay_period_id,
-    basic_pay,
+    ordinary_days_pay,
+    special_holiday_pay,
+    legal_holiday_pay,
     overtime_pay,
-    holiday_pay,
     allowances,
     other_earnings,
+    absent_deduction,
+    late_deduction,
+    undertime_deduction,
     gross_pay,
     sss_deduction,
     philhealth_deduction,
@@ -336,9 +341,6 @@ router.post('/', auth, authorize('payslips', 'create'), async (req, res) => {
     sss_loan,
     pagibig_loan,
     cash_advance,
-    late_deduction,
-    undertime_deduction,
-    absent_deduction,
     other_deductions,
     total_deductions,
     net_pay,
@@ -351,6 +353,9 @@ router.post('/', auth, authorize('payslips', 'create'), async (req, res) => {
     ordinary_days,
     special_holiday_hours,
     legal_holiday_days,
+    basic_salary,
+    daily_rate,
+    hourly_rate,
     prepared_by_name,
     prepared_by_title,
     check_by_name,
@@ -370,25 +375,28 @@ router.post('/', auth, authorize('payslips', 'create'), async (req, res) => {
 
     const result = await pool.query(
       `INSERT INTO payslips
-      (reference_no, employee_id, pay_period_id, basic_pay, overtime_pay,
-      holiday_pay, allowances, other_earnings, gross_pay, sss_deduction,
-      philhealth_deduction, pagibig_deduction, withholding_tax, sss_loan,
-      pagibig_loan, cash_advance, late_deduction, undertime_deduction, absent_deduction,
+      (reference_no, employee_id, pay_period_id, ordinary_days_pay, special_holiday_pay,
+      legal_holiday_pay, overtime_pay, allowances, other_earnings, absent_deduction,
+      late_deduction, undertime_deduction, gross_pay, sss_deduction, philhealth_deduction,
+      pagibig_deduction, withholding_tax, sss_loan, pagibig_loan, cash_advance,
       other_deductions, total_deductions, net_pay, days_worked, days_absent, days_leave,
       ot_hours, late_mins_total, undertime_mins_total, ordinary_days, special_holiday_hours,
-      legal_holiday_days, prepared_by_name, prepared_by_title, check_by_name, check_by_title,
-      generated_by)
+      legal_holiday_days, basic_salary, daily_rate, hourly_rate, prepared_by_name,
+      prepared_by_title, check_by_name, check_by_title, generated_by)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
       $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34,
-      $35, $36)
+      $35, $36, $37, $38, $39)
       RETURNING *`,
-      [refNo, employee_id, pay_period_id, basic_pay, overtime_pay, holiday_pay, allowances,
-      other_earnings, gross_pay, sss_deduction, philhealth_deduction, pagibig_deduction,
-      withholding_tax, sss_loan || 0, pagibig_loan || 0, cash_advance || 0, late_deduction,
-      undertime_deduction, absent_deduction, other_deductions, total_deductions, net_pay,
-      days_worked, days_absent, days_leave, ot_hours, late_mins_total, undertime_mins_total,
-      ordinary_days, special_holiday_hours, legal_holiday_days, prepared_by_name,
-      prepared_by_title, check_by_name, check_by_title, generated_by]
+      [refNo, employee_id, pay_period_id, ordinary_days_pay || 0, special_holiday_pay || 0,
+      legal_holiday_pay || 0, overtime_pay || 0, allowances || 0, other_earnings || 0,
+      absent_deduction || 0, late_deduction || 0, undertime_deduction || 0, gross_pay || 0,
+      sss_deduction || 0, philhealth_deduction || 0, pagibig_deduction || 0, withholding_tax || 0,
+      sss_loan || 0, pagibig_loan || 0, cash_advance || 0, other_deductions || 0,
+      total_deductions || 0, net_pay || 0, days_worked || 0, days_absent || 0, days_leave || 0,
+      ot_hours || 0, late_mins_total || 0, undertime_mins_total || 0, ordinary_days || 0,
+      special_holiday_hours || 0, legal_holiday_days || 0, basic_salary || 0, daily_rate || 0,
+      hourly_rate || 0, prepared_by_name || null, prepared_by_title || null, check_by_name || null,
+      check_by_title || null, generated_by]
     );
 
     const newPayslip = result.rows[0];
