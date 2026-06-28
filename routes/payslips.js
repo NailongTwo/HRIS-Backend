@@ -385,7 +385,7 @@ router.post('/', auth, authorize('payslips', 'create'), async (req, res) => {
       prepared_by_title, check_by_name, check_by_title, generated_by)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
       $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34,
-      $35, $36, $37, $38, $39)
+      $35, $36, $37, $38, $39, $40)
       RETURNING *`,
       [refNo, employee_id, pay_period_id, ordinary_days_pay || 0, special_holiday_pay || 0,
       legal_holiday_pay || 0, overtime_pay || 0, allowances || 0, other_earnings || 0,
